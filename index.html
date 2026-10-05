@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="description" content="Miniature Motorsport - a premium toy-scale 3D arcade racing game built with Three.js." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Miniature Motorsport</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0b1020; overflow: hidden; }
+    #boot {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 22px; background: #0b1020; color: #e8ecff;
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      transition: opacity .5s ease;
+    }
+    #boot .mark { font-size: 13px; letter-spacing: .42em; text-transform: uppercase; opacity: .55; }
+    #boot .bar { width: min(240px, 60vw); height: 4px; border-radius: 999px; background: rgba(255,255,255,.12); overflow: hidden; }
+    #boot .bar span { display: block; height: 100%; width: 40%; border-radius: 999px;
+      background: linear-gradient(90deg,#5b8cff,#c86bff); animation: slide 1.1s ease-in-out infinite; }
+    @keyframes slide { 0% { transform: translateX(-110%);} 100% { transform: translateX(360%);} }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+  <div id="ui-root"></div>
+  <div id="boot">
+    <div class="mark">Miniature Motorsport</div>
+    <div class="bar"><span></span></div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

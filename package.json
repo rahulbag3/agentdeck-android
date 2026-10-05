@@ -1,0 +1,18 @@
+{
+  "name": "miniature-motorsport",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Miniature Motorsport - a premium Three.js browser 3D arcade racing game",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
+  }
+}
