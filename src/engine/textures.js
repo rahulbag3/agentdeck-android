@@ -160,7 +160,25 @@ const generators = {
       out[0] = base;
       out[1] = base * 0.84;
       out[2] = base * 0.58;
-/** Rough natural stone for cliffs, rocks and canyon walls. */
+    });
+    const height = new Float32Array(size * size);
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++) {
+        const u = x / size;
+        height[y * size + x] =
+          Math.sin(u * 26 + fbm2D(noise, u * 2, (y / size) * 2, 2) * 7) * 0.18 +
+          fbm2D(noise, u * 3, (y / size) * 3, 4) * 0.5 +
+          ripple(x * 1.3, y * 1.3) * 0.32;
+      }
+    return {
+      map: finish(albedo, { srgb: true }),
+      roughnessMap: finish(roughFrom(size, (x, y) =>
+        0.86 + fbm2D(noise, (x / size) * 4, (y / size) * 4, 3) * 0.1)),
+      normalMap: finish(heightToNormal(height, size, 1.1))
+    };
+  },
+
+  /** Rough natural stone for cliffs, rocks and canyon walls. */
   rock(size = 512) {
     const noise = makeValueNoise2D(6161);
     const crack = makeValueNoise2D(313);
@@ -207,7 +225,15 @@ const generators = {
         height[y * size + x] =
           fbm2D(noise, u * 4, v * 4, 4) * 0.8 + fine(x * 1.1, y * 1.1) * 0.2 * seam(u, v);
       }
-/** Weathered timber planking for docks, bridges and barns. */
+    return {
+      map: finish(albedo, { srgb: true }),
+      roughnessMap: finish(roughFrom(size, (x, y) =>
+        0.8 + fbm2D(noise, (x / size) * 4, (y / size) * 4, 3) * 0.16)),
+      normalMap: finish(heightToNormal(height, size, 1.3))
+    };
+  },
+
+  /** Weathered timber planking for docks, bridges and barns. */
   wood(size = 512) {
     const noise = makeValueNoise2D(818);
     const albedo = paint(size, (x, y, out) => {
@@ -276,8 +302,38 @@ const generators = {
     });
     return { map: finish(albedo, { srgb: true }) };
   },
+  blob(size = 128, power = 2.2) {
+    const canvas = makeCanvas(size);
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(size, size);
+    const c = size / 2;
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++) {
+        const d = Math.hypot(x - c, y - c) / c;
+        const i = (y * size + x) * 4;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+        img.data[i + 3] = Math.pow(clamp01(1 - d), power) * 255;
+      }
+    ctx.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(canvas);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  },
 
-  /** Soft radial blob used for skid marks and particle sprites. */
+  /** Flat colour with subtle noise — generic material albedo. */
+  plain(size = 64, color = [1, 1, 1], noiseAmount = 0.03) {
+    const noise = makeValueNoise2D(4242);
+    const albedo = paint(size, (x, y, out) => {
+      const n = 1 + (noise(x * 0.8, y * 0.8) - 0.5) * noiseAmount * 2;
+      out[0] = color[0] * n;
+      out[1] = color[1] * n;
+      out[2] = color[2] * n;
+    });
+    return { map: finish(albedo, { srgb: true }) };
+  }
+};
+
+
 /** Get (and memoise) a named texture set. */
 export const getTexture = (name, ...args) => {
   const key = `${name}(${args.join(',')})`;
@@ -329,59 +385,3 @@ export const disposeTextureCache = () => {
 };
 
 export { heightToNormal, makeCanvas, paint, finish, generators };
-  blob(size = 128, power = 2.2) {
-    const canvas = makeCanvas(size);
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(size, size);
-    const c = size / 2;
-    for (let y = 0; y < size; y++)
-      for (let x = 0; x < size; x++) {
-        const d = Math.hypot(x - c, y - c) / c;
-        const i = (y * size + x) * 4;
-        img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
-        img.data[i + 3] = Math.pow(clamp01(1 - d), power) * 255;
-      }
-    ctx.putImageData(img, 0, 0);
-    const t = new THREE.CanvasTexture(canvas);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  },
-
-  /** Flat colour with subtle noise — generic material albedo. */
-  plain(size = 64, color = [1, 1, 1], noiseAmount = 0.03) {
-    const noise = makeValueNoise2D(4242);
-    const albedo = paint(size, (x, y, out) => {
-      const n = 1 + (noise(x * 0.8, y * 0.8) - 0.5) * noiseAmount * 2;
-      out[0] = color[0] * n;
-      out[1] = color[1] * n;
-      out[2] = color[2] * n;
-    });
-    return { map: finish(albedo, { srgb: true }) };
-  }
-};
-
-/* __EXPORTS__ */
-    return {
-      map: finish(albedo, { srgb: true }),
-      roughnessMap: finish(roughFrom(size, (x, y) =>
-        0.8 + fbm2D(noise, (x / size) * 4, (y / size) * 4, 3) * 0.16)),
-      normalMap: finish(heightToNormal(height, size, 1.3))
-    };
-  },
-    });
-    const height = new Float32Array(size * size);
-    for (let y = 0; y < size; y++)
-      for (let x = 0; x < size; x++) {
-        const u = x / size;
-        height[y * size + x] =
-          Math.sin(u * 26 + fbm2D(noise, u * 2, (y / size) * 2, 2) * 7) * 0.18 +
-          fbm2D(noise, u * 3, (y / size) * 3, 4) * 0.5 +
-          ripple(x * 1.3, y * 1.3) * 0.32;
-      }
-    return {
-      map: finish(albedo, { srgb: true }),
-      roughnessMap: finish(roughFrom(size, (x, y) =>
-        0.86 + fbm2D(noise, (x / size) * 4, (y / size) * 4, 3) * 0.1)),
-      normalMap: finish(heightToNormal(height, size, 1.1))
-    };
-  },
