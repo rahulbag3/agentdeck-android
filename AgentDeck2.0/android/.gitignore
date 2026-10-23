@@ -1,0 +1,22 @@
+# Build outputs
+build/
+generated/
+.ktlint-cache/
+
+# Gradle cache
+.gradle/
+
+# Android Studio
+idea/
+*.iws
+*.ipr
+*.iml
+
+# Native debugging
+cxx/
+externalNativeBuild/
+
+# APKs (already in root ignore)
+*.apk
+*.aab
+*.keystore
