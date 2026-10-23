@@ -1,0 +1,41 @@
+# Build outputs
+build/
+out/
+*.apk
+*.aab
+*.keystore
+
+# Gradle caches
+.gradle/
+!gradle/wrapper/*
+gradle-app.settings
+
+# Android Studio
+.idea/
+*.iml
+*.swp
+*.swo
+*.jpb
+
+# Generated files
+app/build/generated/**
+app/build/tmp/
+
+# Screenshot artifacts from testing
+*_*.png
+test-*.png
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Local configuration (never commit API keys or local settings)
+local.properties
+*.local.properties
+
+# Runtime data
+*.db
+*.log
+
+# Mock server logs
+agentdeck-mock.log
