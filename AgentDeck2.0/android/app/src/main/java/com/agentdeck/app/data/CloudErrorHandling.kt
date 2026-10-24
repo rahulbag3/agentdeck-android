@@ -76,7 +76,7 @@ object CloudOperationHandler {
 
     /** Exponential backoff with a hard ceiling, shared with any future retry queue. */
     fun buildRetryBackoff(attempt: Int): Long =
-        minOf(1000L shl (attempt - 1).coerceIn(0, 3), 10_000L)
+        (1000L shl (attempt - 1).coerceIn(0, 5)).coerceAtMost(10_000L)
 }
 
 sealed class CloudOperationResult {
