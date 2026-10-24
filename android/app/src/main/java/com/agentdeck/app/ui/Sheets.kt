@@ -63,6 +63,7 @@ import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.AppConfig
 import com.agentdeck.app.data.ConfirmKind
 import com.agentdeck.app.data.ConnectionTest
+import com.agentdeck.app.data.LocalEngine
 import com.agentdeck.app.data.LocalModelState
 import com.agentdeck.app.data.ModelOption
 import com.agentdeck.app.data.RepoContext
@@ -262,10 +263,11 @@ private fun ModelsSheet(state: AgentDeckState) {
     }
     Spacer(Modifier.height(12.dp))
     SectionRow("ON THIS DEVICE") {
-        PreviewTag()
+        if (LocalEngine.available) AdTag("LLAMA.CPP", GreenSoft, GreenInk) else PreviewTag()
     }
     Spacer(Modifier.height(7.dp))
-    state.localModels().forEach { model ->
+    val importedDraftIds = state.importedModels.map { it.id }.toSet()
+    state.localModels().sortedByDescending { it.id in importedDraftIds }.forEach { model ->
         ModelSheetRow(
             model = model,
             selected = draft.modelId == model.id,
@@ -273,6 +275,12 @@ private fun ModelsSheet(state: AgentDeckState) {
         )
         Spacer(Modifier.height(6.dp))
     }
+    Text(
+        "Imported GGUF models generate on this phone. Unloaded models can be loaded in Settings. Sample entries are previews.",
+        fontSize = 9.5.sp,
+        lineHeight = 14.sp,
+        color = Muted2
+    )
     Spacer(Modifier.height(10.dp))
     SectionRow("HOST MODELS") {}
     Spacer(Modifier.height(7.dp))
@@ -594,9 +602,12 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
         Text(error!!, fontSize = 10.5.sp, lineHeight = 15.sp, color = RedInk)
     }
     Spacer(Modifier.height(14.dp))
-    SectionRow("ON THIS DEVICE") { PreviewTag() }
+    SectionRow("ON THIS DEVICE") {
+        if (LocalEngine.available) AdTag("LLAMA.CPP", GreenSoft, GreenInk) else PreviewTag()
+    }
     Spacer(Modifier.height(7.dp))
-    state.localModels().forEach { localModel ->
+    val importedSwitchIds = state.importedModels.map { it.id }.toSet()
+    state.localModels().sortedByDescending { it.id in importedSwitchIds }.forEach { localModel ->
         ModelSheetRow(
             model = localModel,
             selected = state.isLocalTask(task) && task.modelId == localModel.id,
@@ -610,7 +621,7 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
     }
     Spacer(Modifier.height(2.dp))
     Text(
-        "Local inference is simulated and does not read the GitHub snapshot. Switching back to cloud keeps the snapshot attached to this task.",
+        "Imported GGUF models run offline on this phone and do not read the GitHub snapshot. Sample entries are previews. Switching back to cloud keeps the snapshot attached to this task.",
         fontSize = 9.5.sp,
         lineHeight = 14.sp,
         color = Muted2

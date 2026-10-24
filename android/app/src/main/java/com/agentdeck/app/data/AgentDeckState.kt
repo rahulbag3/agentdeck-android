@@ -1,6 +1,7 @@
 package com.agentdeck.app.data
 
 import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -8,11 +9,15 @@ import androidx.compose.runtime.setValue
 import com.agentdeck.app.data.local.TaskStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val PERSIST_INTERVAL_MS = 900L
 
@@ -29,10 +34,24 @@ class AgentDeckState(
     private val config = AppConfig(context.applicationContext)
     private val store = TaskStore(context.applicationContext)
     private val network = NetworkMonitor(context.applicationContext)
+    private val appContext = context.applicationContext
     private var lastPersisted: AgentDeckData? = null
 
     var data by mutableStateOf(SeedData.create())
         private set
+
+    /** GGUF models imported into app storage. */
+    var importedModels by mutableStateOf<List<ImportedModel>>(emptyList())
+        private set
+
+    var modelImporting by mutableStateOf<String?>(null)
+        private set
+
+    /** Tasks currently generating with a real local model. */
+    var localGenerating by mutableStateOf(emptySet<String>())
+        private set
+    private val localHandles = mutableMapOf<String, Long>()
+    private val localStopFlags = mutableMapOf<String, AtomicBoolean>()
 
     /** Mirrors device connectivity; drives the offline banner. */
     var online by mutableStateOf(true)
@@ -129,6 +148,11 @@ class AgentDeckState(
                 )
             )
         }
+        importedModels = LocalModelRegistry.decode(config.localModelsJson)
+            .filter { File(it.path).exists() }
+        if (importedModels.isNotEmpty()) {
+            data = data.copy(models = data.models + importedModels.map { it.toModelOption() })
+        }
         data = data.copy(models = data.models + cloudModelOption())
         data = attributeAgentMessages(data)
         reconcileDefaultModel()
@@ -186,6 +210,7 @@ class AgentDeckState(
 
     /** Cancels every in-flight job and stops connectivity callbacks. */
     fun shutdown() {
+        localStopFlags.values.forEach { it.set(true) }
         (hostJobs.values + localJobs.values + modelJobs.values + cloudJobs.values)
             .forEach { it.cancel() }
         hostJobs.clear()
@@ -193,6 +218,17 @@ class AgentDeckState(
         modelJobs.clear()
         cloudJobs.clear()
         repoCache.clear()
+        val handles = localHandles.values.toList()
+        localHandles.clear()
+        if (handles.isNotEmpty()) {
+            // Free native models off the main thread; generation is already cancelled.
+            Thread {
+                handles.forEach { handle ->
+                    LocalEngine.nativeCancel(handle)
+                    LocalEngine.nativeFree(handle)
+                }
+            }.apply { isDaemon = true }.start()
+        }
         network.stop()
         appLockObserver?.let {
             androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.removeObserver(it)
@@ -416,6 +452,7 @@ class AgentDeckState(
     fun isTaskBusy(taskId: String): Boolean =
         taskId in sending ||
             taskId in localTyping ||
+            taskId in localGenerating ||
             taskId in cloudStreaming ||
             taskId in repoContextLoading ||
             cloudJobs[taskId]?.isActive == true
@@ -731,6 +768,31 @@ class AgentDeckState(
     fun loadLocalModel(modelId: String) {
         val current = model(modelId) ?: return
         if (!current.isLocal || current.localState != LocalModelState.UNLOADED) return
+        val imported = importedModels.firstOrNull { it.id == modelId }
+        if (imported != null) {
+            updateModel(modelId) { it.copy(localState = LocalModelState.LOADING) }
+            modelJobs.remove(modelId)?.cancel()
+            modelJobs[modelId] = scope.launch {
+                val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+                val handle = withContext(Dispatchers.Default) {
+                    LocalEngine.nativeLoad(imported.path, threads, LOCAL_CONTEXT_SIZE)
+                }
+                val updated = model(modelId) ?: return@launch
+                if (updated.localState != LocalModelState.LOADING) {
+                    if (handle != 0L) withContext(Dispatchers.Default) { LocalEngine.nativeFree(handle) }
+                    return@launch
+                }
+                if (handle == 0L) {
+                    updateModel(modelId) { it.copy(localState = LocalModelState.UNLOADED) }
+                    toast("Could not load ${imported.name}. The file may be unsupported or too large for this phone.")
+                } else {
+                    localHandles[modelId] = handle
+                    updateModel(modelId) { it.copy(localState = LocalModelState.READY) }
+                    toast("${imported.name} loaded on this phone")
+                }
+            }
+            return
+        }
         updateModel(modelId) { it.copy(localState = LocalModelState.LOADING) }
         modelJobs.remove(modelId)?.cancel()
         modelJobs[modelId] = scope.launch {
@@ -746,6 +808,16 @@ class AgentDeckState(
         val current = model(modelId) ?: return
         if (!current.isLocal || current.localState != LocalModelState.READY) return
         modelJobs.remove(modelId)?.cancel()
+        localStopFlags.keys
+            .filter { task(it)?.modelId == modelId }
+            .forEach { localStopFlags[it]?.set(true) }
+        val handle = localHandles.remove(modelId)
+        if (handle != null) {
+            scope.launch(Dispatchers.Default) {
+                LocalEngine.nativeCancel(handle)
+                LocalEngine.nativeFree(handle)
+            }
+        }
         updateModel(modelId) { it.copy(localState = LocalModelState.UNLOADED) }
         if (data.settings.defaultModelId == modelId) {
             val fallback = hostModels().firstOrNull()?.id ?: cloudModels().firstOrNull { it.isReady }?.id
@@ -756,19 +828,104 @@ class AgentDeckState(
         toast("${current.name} unloaded")
     }
 
-    fun importLocalModel(modelId: String) {
-        val current = model(modelId) ?: return
-        if (!current.isLocal || current.localState != LocalModelState.NOT_IMPORTED) return
-        updateModel(modelId) { it.copy(localState = LocalModelState.IMPORTING) }
-        modelJobs.remove(modelId)?.cancel()
-        modelJobs[modelId] = scope.launch {
-            delay(1600)
-            val updated = model(modelId) ?: return@launch
-            if (updated.localState != LocalModelState.IMPORTING) return@launch
-            updateModel(modelId) { it.copy(localState = LocalModelState.UNLOADED) }
-            toast("${updated.name} imported · preview")
+    /** Copies a picked GGUF into app storage and adds it to the model list. */
+    suspend fun importLocalModelFromUri(uri: Uri, displayName: String?): String? {
+        if (modelImporting != null) return "Another model is still importing."
+        val name = displayName?.trim()?.takeIf { it.isNotEmpty() }?.removeSuffix(".gguf")
+            ?: "Imported model"
+        modelImporting = name
+        return try {
+            withContext(Dispatchers.IO) {
+                val directory = File(appContext.filesDir, "models").apply { mkdirs() }
+                val id = "local-" + UUID.randomUUID().toString().take(8)
+                val target = File(directory, "$id.gguf")
+                val copied = runCatching {
+                    appContext.contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    } ?: error("Could not open that file")
+                }.isSuccess
+                if (!copied) {
+                    target.delete()
+                    return@withContext "Could not read that file."
+                }
+                val magic = ByteArray(4)
+                val headerOk = runCatching {
+                    target.inputStream().use { it.read(magic) } == 4 && String(magic) == "GGUF"
+                }.getOrDefault(false)
+                if (!headerOk) {
+                    target.delete()
+                    return@withContext "That file is not a GGUF model."
+                }
+                if (target.length() < 1_000_000L) {
+                    target.delete()
+                    return@withContext "That model file is too small."
+                }
+                val imported = ImportedModel(
+                    id = id,
+                    name = name,
+                    path = target.absolutePath,
+                    sizeBytes = target.length(),
+                    importedAt = System.currentTimeMillis()
+                )
+                importedModels = importedModels + imported
+                config.localModelsJson = LocalModelRegistry.encode(importedModels)
+                data = data.copy(models = data.models + imported.toModelOption())
+                "Imported $name · load it to chat"
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            "Could not import the model: ${e.message}"
+        } finally {
+            modelImporting = null
         }
     }
+
+    fun removeLocalModel(modelId: String) {
+        val imported = importedModels.firstOrNull { it.id == modelId } ?: return
+        localStopFlags.keys
+            .filter { task(it)?.modelId == modelId }
+            .forEach { localStopFlags[it]?.set(true) }
+        val handle = localHandles.remove(modelId)
+        if (handle != null) {
+            scope.launch(Dispatchers.Default) {
+                LocalEngine.nativeCancel(handle)
+                LocalEngine.nativeFree(handle)
+            }
+        }
+        runCatching { File(imported.path).delete() }
+        importedModels = importedModels - imported
+        config.localModelsJson = LocalModelRegistry.encode(importedModels)
+        data = data.copy(models = data.models.filterNot { it.id == modelId })
+        if (data.settings.defaultModelId == modelId) {
+            data = data.copy(settings = data.settings.copy(defaultModelId = defaultModelId()))
+        }
+        toast("Removed ${imported.name}")
+    }
+
+    fun isLocalStreaming(taskId: String): Boolean = taskId in localGenerating
+
+    /** Stops real on-device generation; the partial reply is kept by the job. */
+    fun stopLocalReply(taskId: String) {
+        if (taskId !in localGenerating) return
+        localStopFlags[taskId]?.set(true)
+        val modelId = task(taskId)?.modelId
+        localHandles[modelId]?.let { handle ->
+            scope.launch(Dispatchers.Default) { LocalEngine.nativeCancel(handle) }
+        }
+        toast("Stopping local generation…")
+    }
+
+    private fun ImportedModel.toModelOption(): ModelOption = ModelOption(
+        id = id,
+        name = name,
+        provider = ModelProvider.LOCAL,
+        providerLabel = "On this device",
+        quantization = "GGUF",
+        sizeGB = if (sizeBytes > 0) sizeBytes / 1_000_000_000.0 else null,
+        contextK = LOCAL_CONTEXT_SIZE / 1024,
+        localState = LocalModelState.UNLOADED
+    )
 
     // ----- cloud & repository configuration -----
 
@@ -1412,7 +1569,13 @@ class AgentDeckState(
     private fun startLocalReply(taskId: String, prompt: String) {
         val task = task(taskId) ?: return
         if (!isLocalTask(task) || model(task.modelId)?.isReady != true) return
-        if (taskId in localTyping) return
+        if (taskId in localTyping || taskId in localGenerating) return
+        val imported = importedModels.firstOrNull { it.id == task.modelId }
+        val handle = localHandles[task.modelId]
+        if (imported != null && handle != null) {
+            startRealLocalReply(taskId, imported, handle)
+            return
+        }
         localTyping = localTyping + taskId
         localJobs.remove(taskId)?.cancel()
         localJobs[taskId] = scope.launch {
@@ -1438,6 +1601,166 @@ class AgentDeckState(
                 )
             }
             localTyping = localTyping - taskId
+        }
+    }
+
+    /** Streams a real completion from the bundled llama.cpp runtime. */
+    private fun startRealLocalReply(taskId: String, imported: ImportedModel, handle: Long) {
+        val task = task(taskId) ?: return
+        if (taskId in localGenerating) return
+        localJobs.remove(taskId)?.cancel()
+        val stopFlag = AtomicBoolean(false)
+        localStopFlags[taskId] = stopFlag
+        localGenerating = localGenerating + taskId
+        val replyId = newMessageId()
+        val replyModel = model(task.modelId)
+        localJobs[taskId] = scope.launch {
+            val self = currentCoroutineContext()[Job]
+            val start = System.currentTimeMillis()
+            updateTask(taskId) {
+                it.copy(
+                    status = TaskStatus.IN_PROGRESS,
+                    activeRun = true,
+                    failure = null,
+                    updatedAt = start,
+                    activity = it.activity + ActivityEvent("local-engine", "Generating on this phone · ${imported.name}", start)
+                )
+            }
+
+            val buffer = StringBuilder()
+            var added = false
+            var done = false
+            var lastRendered = ""
+            val ticker = launch {
+                while (!done) {
+                    delay(110)
+                    val snapshot = synchronized(buffer) { buffer.toString() }
+                    if (snapshot.isEmpty() || snapshot == lastRendered) continue
+                    lastRendered = snapshot
+                    val now = System.currentTimeMillis()
+                    if (!added) {
+                        added = true
+                        updateTask(taskId) {
+                            it.copy(
+                                messages = it.messages + Message(
+                                    id = replyId,
+                                    role = MessageRole.AGENT,
+                                    text = snapshot,
+                                    at = now,
+                                    localPreview = false,
+                                    modelName = replyModel?.name,
+                                    provider = ModelProvider.LOCAL
+                                ),
+                                updatedAt = now
+                            )
+                        }
+                    } else {
+                        updateMessage(taskId, replyId) { it.copy(text = snapshot, at = now) }
+                        updateTask(taskId) { it.copy(updatedAt = now) }
+                    }
+                }
+            }
+
+            val turns = buildCloudTurns(task.messages)
+            val roles = turns.map { it.role }.toTypedArray()
+            val contents = turns.map { it.content }.toTypedArray()
+            val result = try {
+                withContext(Dispatchers.Default) {
+                    LocalEngine.nativeGenerate(
+                        handle,
+                        LOCAL_SYSTEM_PROMPT,
+                        roles,
+                        contents,
+                        LOCAL_MAX_TOKENS,
+                        0.7f,
+                        0.9f,
+                        object : LocalEngine.TokenCallback {
+                            override fun onToken(text: String): Boolean {
+                                if (stopFlag.get()) return false
+                                synchronized(buffer) { buffer.append(text) }
+                                return true
+                            }
+                        }
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.error("Local generation failed", e)
+                -1
+            }
+
+            done = true
+            ticker.cancel()
+            val text = synchronized(buffer) { buffer.toString() }
+            val now = System.currentTimeMillis()
+            if (text.isNotBlank()) {
+                if (added) {
+                    updateMessage(taskId, replyId) { it.copy(text = text, at = now) }
+                } else {
+                    updateTask(taskId) {
+                        it.copy(
+                            messages = it.messages + Message(
+                                id = replyId,
+                                role = MessageRole.AGENT,
+                                text = text,
+                                at = now,
+                                localPreview = false,
+                                modelName = replyModel?.name,
+                                provider = ModelProvider.LOCAL
+                            )
+                        )
+                    }
+                }
+            }
+
+            val stopped = stopFlag.get() || result == -3
+            when {
+                stopped -> updateTask(taskId) {
+                    it.copy(
+                        status = TaskStatus.NEEDS_INPUT,
+                        activeRun = false,
+                        updatedAt = now,
+                        activity = it.activity + ActivityEvent("local-engine", "Stopped by you", now),
+                        messages = it.messages + Message(
+                            id = newMessageId(),
+                            role = MessageRole.SYSTEM,
+                            text = "Generation stopped\nThe partial reply above was kept. Nothing was changed. Send a message to continue.",
+                            at = now
+                        )
+                    )
+                }
+                text.isBlank() -> updateTask(taskId) {
+                    it.copy(
+                        status = TaskStatus.NEEDS_INPUT,
+                        activeRun = false,
+                        updatedAt = now,
+                        messages = it.messages + Message(
+                            id = newMessageId(),
+                            role = MessageRole.SYSTEM,
+                            text = "No reply\nThe local model returned no text. Try again or load a different model.",
+                            at = now
+                        )
+                    )
+                }
+                else -> updateTask(taskId) {
+                    it.copy(
+                        status = TaskStatus.NEEDS_INPUT,
+                        activeRun = false,
+                        retryAttempts = 0,
+                        updatedAt = now,
+                        activity = it.activity + ActivityEvent(
+                            "local-engine",
+                            "Answered on this phone · ${imported.name}",
+                            now
+                        )
+                    )
+                }
+            }
+
+            localGenerating = localGenerating - taskId
+            localStopFlags.remove(taskId)
+            if (localJobs[taskId] === self) localJobs.remove(taskId)
         }
     }
 
@@ -2430,6 +2753,7 @@ class AgentDeckState(
                 }
             }
         }
+        localStopFlags.values.forEach { it.set(true) }
         hostJobs.values.forEach { it.cancel() }
         localJobs.values.forEach { it.cancel() }
         modelJobs.values.forEach { it.cancel() }
@@ -2440,9 +2764,24 @@ class AgentDeckState(
         cloudJobs.clear()
         hostPermissions.clear()
         repoCache.clear()
+        val handles = localHandles.values.toList()
+        localHandles.clear()
+        if (handles.isNotEmpty()) {
+            Thread {
+                handles.forEach { handle ->
+                    LocalEngine.nativeCancel(handle)
+                    LocalEngine.nativeFree(handle)
+                }
+            }.apply { isDaemon = true }.start()
+        }
+        localGenerating = emptySet()
+        localStopFlags.clear()
         val hostSnapshot = data.host
         data = SeedData.create()
-        data = data.copy(models = data.models + cloudModelOption(), host = hostSnapshot)
+        data = data.copy(
+            models = data.models + importedModels.map { it.toModelOption() } + cloudModelOption(),
+            host = hostSnapshot
+        )
         data = attributeAgentMessages(data)
         reconcileDefaultModel()
         lastPersisted = null
@@ -2670,6 +3009,15 @@ class AgentDeckState(
 
     companion object {
         private const val REPO_CACHE_TTL = 10 * 60 * 1000L
+        private const val LOCAL_CONTEXT_SIZE = 2048
+        private const val LOCAL_MAX_TOKENS = 384
+        private val LOCAL_SYSTEM_PROMPT = """
+            You are the on-device assistant inside AgentDeck, running entirely on the user's phone.
+
+            You can discuss the task, review code in the conversation, and suggest changes. You cannot edit files, run commands, run tests, install packages, or reach the internet from this device.
+
+            Never claim that you changed, ran, or completed anything. Present suggestions as proposals that the user's execution host can apply. Be concise and practical.
+        """.trimIndent()
         private val CLOUD_SYSTEM_PROMPT = """
             You are the analysis model inside AgentDeck. You are reached over the user's own API key, directly from their phone.
 

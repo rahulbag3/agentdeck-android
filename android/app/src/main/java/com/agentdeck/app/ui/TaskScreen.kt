@@ -573,7 +573,7 @@ private fun MessageBlock(
                 ModelProvider.LOCAL -> LocalChip("On this phone")
                 ModelProvider.HOST -> Unit
             }
-            if (provider == ModelProvider.LOCAL) PreviewTag()
+            if (provider == ModelProvider.LOCAL && message.localPreview) PreviewTag()
         }
         Spacer(Modifier.height(3.dp))
         if (provider == ModelProvider.CLOUD) {
@@ -712,8 +712,12 @@ private fun ActivityCard(state: AgentDeckState, task: Task) {
             val hasLocalHistory = task.messages.any { it.provider == ModelProvider.LOCAL } ||
                 task.activity.any { it.type == "local" }
             val hasLiveHostHistory = task.activity.any { it.type == "host" || it.type == "host-error" }
+            val hasRealLocalHistory = task.activity.any { it.type == "local-engine" } ||
+                task.messages.any { it.provider == ModelProvider.LOCAL && !it.localPreview }
             when {
                 hasLiveHostHistory -> AdTag("Live host", com.agentdeck.app.ui.theme.GreenSoft, com.agentdeck.app.ui.theme.GreenInk)
+                hasRealLocalHistory && hasCloudHistory -> AdTag("Mixed", GraySoft, GrayInk)
+                hasRealLocalHistory -> AdTag("On device", com.agentdeck.app.ui.theme.BlueSoft, com.agentdeck.app.ui.theme.BlueInk)
                 hasCloudHistory && hasLocalHistory -> AdTag("Mixed", GraySoft, GrayInk)
                 hasCloudHistory -> CloudChip("Cloud")
                 else -> PreviewTag()
@@ -1054,7 +1058,8 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
     var text by remember(task.id) { mutableStateOf("") }
     val streamingCloud = state.isCloudStreaming(task.id)
     val streamingHost = state.isHostRunning(task.id)
-    val streaming = streamingCloud || streamingHost
+    val streamingLocal = state.isLocalStreaming(task.id)
+    val streaming = streamingCloud || streamingHost || streamingLocal
     val retryCloud = state.canRetryCloudReply(task.id)
     val busy = state.isTaskBusy(task.id)
     val canSend = text.isNotBlank() && !busy
@@ -1154,6 +1159,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                             when {
                                 streamingCloud -> state.stopCloudReply(task.id)
                                 streamingHost -> state.stopHostRun(task.id)
+                                streamingLocal -> state.stopLocalReply(task.id)
                                 else -> send()
                             }
                         },
@@ -1227,6 +1233,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
             }
             val hint = when {
                 streamingHost -> "Host run in progress. Stop to cancel the agent on the host; reported changes stay."
+                streamingLocal -> "Generating on this phone. Stop to keep the partial reply; nothing is changed or run."
                 streamingCloud -> "Cloud reply streaming. Stop to keep the partial reply; nothing is changed or run."
                 cloud -> "Nothing is changed or run. File changes, checks, and approvals require the host."
                 local -> if (state.canReachHost()) {

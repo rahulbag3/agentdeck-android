@@ -28,6 +28,9 @@ with cloud analysis over your own API key, straight from the phone.
   computer and tasks run your own agent CLI in the project folder. Approvals,
   streamed output, real `git` diffs, and checks come back to the phone. Without
   a host, execution is clearly labelled as simulated.
+- **On-device inference** — import a GGUF model and chat offline with a bundled
+  llama.cpp runtime. Token streaming runs on the phone; nothing is sent to a
+  server.
 - **Review flow** — diffs, check results, approve or request changes.
 - **Persistence** — tasks, conversations, plans, checks, diffs, and settings are
   stored on-device in Room and survive restarts, rotation, and interrupted runs.
@@ -120,6 +123,20 @@ a tunnel on untrusted networks. See
 [tools/agentdeck-host/README.md](tools/agentdeck-host/README.md) for the full
 protocol and security notes.
 
+### On-device models
+
+The app bundles a llama.cpp runtime (arm64-v8a and x86_64). Import a GGUF file
+from **Settings → On-device models → Import**, then **Load** it. Start a task
+with that model, or switch an existing local conversation to it with **Change**.
+
+- Prefer Q4_K_M models; 1–2B models need roughly 1–2 GB of RAM, larger models
+  may be killed by Android.
+- The model file is copied into app storage; remove it from Settings to reclaim
+  space. Models are not bundled with the APK.
+- The prebuilt native libraries live in `android/app/src/main/jniLibs/`. Rebuild
+  them with `tools/build-llama-android.sh` (pinned llama.cpp tag) if you change
+  the native bridge.
+
 ### Optional Firebase crash reporting
 
 Create a Firebase Android app for `com.agentdeck.app`, download
@@ -135,6 +152,8 @@ android/app/src/main/java/com/agentdeck/app/
 ├── MainActivity.kt         FragmentActivity + Compose host
 ├── data/
 │   ├── AgentDeckState.kt   Central state, navigation, jobs, app lock
+│   ├── LocalEngine.kt      JNI bridge to llama.cpp
+│   ├── LocalModelRegistry.kt  Imported GGUF catalogue
 │   ├── Models.kt           Tasks, messages, plans, checks, config
 │   ├── SeedData.kt         Demo workspace
 │   ├── CloudClient.kt      OpenAI-compatible SSE client + retries
@@ -144,7 +163,9 @@ android/app/src/main/java/com/agentdeck/app/
 │   ├── SecureStore.kt      Keystore AES-GCM secret storage
 │   ├── Logger.kt           Logcat + Crashlytics
 │   └── local/              Room entities, DAO, codec, backup
-└── ui/                     Compose screens, sheets, Markdown renderer
+├── ui/                     Compose screens, sheets, Markdown renderer
+├── cpp/                    llama_jni.cpp + llama/ggml headers
+└── jniLibs/                Prebuilt llama.cpp libraries per ABI
 ```
 
 State flows one way: `AgentDeckState` mutates an immutable `AgentDeckData`
@@ -161,7 +182,7 @@ tools/agentdeck-host/
 
 ## Tests
 
-58 JVM unit tests cover:
+63 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
@@ -170,6 +191,7 @@ tools/agentdeck-host/
 - Cloud error classification, retryability, and backoff
 - Workspace backup format, validation, and skipped rows
 - Host URL policy, endpoint building, and unified-diff parsing
+- Imported local model catalogue encoding and tolerant decoding
 
 The host agent has 9 protocol tests (auth, approval, denial, inspection mode,
 diff collection, checks, cancellation, diff parsing):
@@ -192,8 +214,11 @@ to the default branch.
 
 - Execution is real only when a host agent is connected and the run is
   approved. Without a host, diffs and checks are simulated and labelled as such.
-- The local model catalogue is a UI preview; there is no on-device inference
-  engine yet.
+- On-device quality depends entirely on the GGUF you import. Small or base
+  models produce limited text; no model ships with the app.
+- Native inference supports CPU only (no GPU/NNAPI offload) and runs on one
+  model at a time per loaded model. Large models can be killed on low-RAM
+  devices.
 - Cloud sends require connectivity. There is no automatic offline queue; the
   failure path and retry action are explicit.
 - In-app updates are not implemented; distribution signing is ready.

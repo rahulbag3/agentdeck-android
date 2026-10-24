@@ -124,7 +124,6 @@ The user explicitly kept in scope:
 
 ### Still missing
 
-- A real llama.cpp/GGUF inference engine.
 - Multiple saved cloud endpoints/models.
 - In-app update mechanism and Play Store listing.
 - Automatic offline send queue (cloud sends fail fast with a retry path instead).
@@ -206,6 +205,37 @@ The user explicitly kept in scope:
 - GitHub Actions runs unit tests and assembles the debug APK; the run on
   `agentdeck-root` is green.
 
+**On-device inference (llama.cpp)**
+- Vendored llama.cpp `b11851`, built with NDK 29 for `arm64-v8a` and `x86_64`,
+  CPU only (`GGML_NATIVE=OFF`). Prebuilt shared libraries are committed under
+  `android/app/src/main/jniLibs/<abi>/`; `tools/build-llama-android.sh`
+  reproduces them.
+- `app/src/main/cpp/llama_jni.cpp` exposes load/free/cancel/generate. Generation
+  applies the model's chat template (fallback: plain role transcript), samples
+  with top-k/top-p/temperature, streams pieces through a Kotlin callback, and
+  supports cancellation from another thread.
+- `LocalEngine.kt` is the Kotlin bridge; `LocalModelRegistry` persists imported
+  GGUF paths in `AppConfig` and validates that files still exist at startup.
+- Settings → On-device models imports a GGUF via SAF (copies into app storage,
+  validates the `GGUF` magic and a minimum size), shows real Load/Unload/Remove,
+  and reports `LLAMA.CPP` availability.
+- Real local replies stream into the task with model attribution and no
+  `Simulated` tag; activity uses `local-engine` and shows an `On device` badge.
+  The composer's Stop cancels generation and keeps the partial reply.
+- Generation uses a 2048-token context and 384 max new tokens on background
+  threads; unload/shutdown free native handles. Q4 1–2B models are the practical
+  target (1–2 GB RAM).
+- Verified on the x86_64 emulator with `stories15M-q4_0.gguf`: import → load →
+  switch an existing local task → prompt → streamed tokens → attribution and
+  `On device` activity. The tiny base model's text quality is limited, as
+  expected; the engine path itself is real.
+- R8/JNI: release builds keep `LocalEngine`, its native methods, and
+  `LocalEngine$TokenCallback` (including anonymous implementations). Without
+  those rules R8 renames `onToken` and generation crashes with
+  `NoSuchMethodError`; the JNI lookup now clears a lookup failure and returns
+  an error instead of crashing. The signed release APK (≈16 MB) was installed
+  and a generation was verified after the fix.
+
 **Host bridge (real execution)**
 - `tools/agentdeck-host/server.mjs` is a zero-dependency Node 18+ host agent.
   It creates `agentdeck-host.config.json` on first run with a generated token,
@@ -243,9 +273,10 @@ The user explicitly kept in scope:
 - Reset is "Reset workspace"; the footer shows the real package version.
 
 **Tests**
-- 58 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
+- 63 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
   `CloudErrorHandlingTest` (11), `WorkspaceBackupTest` (9), `HostClientTest` (8),
-  `HostDiffTest` (5), and codec retry-attempt persistence.
+  `HostDiffTest` (5), `LocalModelRegistryTest` (5), and codec retry-attempt
+  persistence.
 - Host agent: 9 protocol tests pass (`node --test tools/agentdeck-host/server.test.mjs`).
 - `androidTest/AppSmokeTest` launches the app, waits for hydration, and opens
   Settings. Verified green on the `agentdeck` AVD:
@@ -591,7 +622,7 @@ cd C:\Users\Rahul\Downloads\qoder\AgentDeck2.0\android
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
 ```
 
-JVM tests currently total 58 and all pass:
+JVM tests currently total 63 and all pass:
 
 - `TaskCodecTest` (5): task/message round-trip, defaults, ordering, damaged payloads, settings, retry attempts.
 - `MarkdownTest` (8): block/inline parsing, fences, escapes, link safety, empty input.
@@ -601,6 +632,7 @@ JVM tests currently total 58 and all pass:
 - `WorkspaceBackupTest` (9): round trip, format/version validation, skipped rows, defaults, empty backups.
 - `HostClientTest` (8): host URL policy, insecure-LAN opt-in, endpoint building, loopback rules.
 - `HostDiffTest` (5): hunk parsing, line numbering, header skipping, no-newline markers, line caps.
+- `LocalModelRegistryTest` (5): catalogue round trip, malformed JSON, skipped rows, defaults.
 
 Host protocol tests total 9 (`node --test tools/agentdeck-host/server.test.mjs`):
 token auth, approval, denial, no-agent inspection mode, missing project,
@@ -630,6 +662,19 @@ The test mock server and this round's test app data were removed after verificat
   - A `Host disconnected` failure card and system notice appeared.
   - Retry remained available.
 - Reconnected, retried the host task, and confirmed it returned to `Review`; the failure card was cleared while the historical system notice remained in the transcript.
+
+### On-device engine verification
+
+- Built llama.cpp for arm64-v8a and x86_64, copied stripped libraries into
+  `jniLibs`, and confirmed the JNI library loads (`LLAMA.CPP` tag in Settings).
+- Imported `stories15M-q4_0.gguf` (19 MB) through the system file picker; the app
+  copied it into `filesDir/models`, showed the real size/context, and loaded it
+  with llama.cpp.
+- Switched an existing local conversation to the model and sent a prompt.
+  Verified streamed tokens, attribution (`stories15M-q4_0 · On this phone`), and
+  `Generating on this phone` / `Answered on this phone` activity.
+- The 15M base model's output is low quality by nature; this verifies the engine
+  path, not model quality. Larger Q4 instruct models are the intended use.
 
 ### Host bridge verification
 

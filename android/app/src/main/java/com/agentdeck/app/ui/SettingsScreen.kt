@@ -63,6 +63,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.launch
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.ConfirmKind
+import com.agentdeck.app.data.LocalEngine
 import com.agentdeck.app.data.LocalModelState
 import com.agentdeck.app.data.ModelOption
 import com.agentdeck.app.ui.theme.Surface as AdSurface
@@ -93,13 +94,33 @@ fun SettingsScreen(state: AgentDeckState) {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: "1.0.0"
     }
+    val scope = rememberCoroutineScope()
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val name = runCatching {
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            }.getOrNull()
+            val message = state.importLocalModelFromUri(uri, name)
+            state.notifyUser(message ?: "Model imported")
+        }
+    }
     val host = state.data.host
     val online = host.connected
     val settings = state.data.settings
     val project = state.project(settings.defaultProjectId)
     val defaultModel = state.model(settings.defaultModelId)
-    val locals = state.localModels()
-    val importedGB = locals.sumOf { if (it.localState == LocalModelState.NOT_IMPORTED) 0.0 else (it.sizeGB ?: 0.0) }
+    val importedIds = state.importedModels.map { it.id }.toSet()
+    val locals = state.localModels().filter { it.id in importedIds }
+    val importedGB = state.importedModels.sumOf { it.sizeBytes / 1_000_000_000.0 }
 
     Column(Modifier.fillMaxSize().background(Surface2)) {
         RootTopBar(
@@ -324,24 +345,55 @@ fun SettingsScreen(state: AgentDeckState) {
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Local inference", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
-                            Text("Runs on this phone · UI preview", style = AdType.Tiny)
+                            Text(
+                                if (LocalEngine.available) "llama.cpp · runs offline on this phone" else "llama.cpp engine unavailable",
+                                style = AdType.Tiny
+                            )
                         }
-                        Text(
-                            "SIMULATED",
-                            fontSize = 7.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = AmberInk,
-                            letterSpacing = 0.5.sp,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(AmberSoft)
-                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        AdTag(
+                            if (LocalEngine.available) "LLAMA.CPP" else "UNAVAILABLE",
+                            if (LocalEngine.available) GreenSoft else AmberSoft,
+                            if (LocalEngine.available) GreenInk else AmberInk
                         )
                     }
-                    Spacer(Modifier.height(8.dp))
-                    locals.forEachIndexed { index, model ->
-                        if (index > 0) AdDivider()
-                        LocalModelRow(model = model, state = state)
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Import a GGUF model", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text(
+                                "Pick a .gguf file from this device. Q4 1–2B models need roughly 1–2 GB of RAM.",
+                                fontSize = 10.sp,
+                                lineHeight = 14.sp,
+                                color = Muted
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        AdButton(
+                            if (state.modelImporting != null) "Importing…" else "Import",
+                            onClick = {
+                                if (state.modelImporting == null) {
+                                    importLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                                }
+                            },
+                            kind = AdButtonKind.OUTLINE,
+                            small = true,
+                            enabled = state.modelImporting == null && LocalEngine.available
+                        )
+                    }
+                    if (locals.isEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "No GGUF models imported yet. Load one here to chat offline; nothing leaves the phone.",
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                            color = Muted2
+                        )
+                    } else {
+                        Spacer(Modifier.height(8.dp))
+                        locals.forEachIndexed { index, model ->
+                            if (index > 0) AdDivider()
+                            LocalModelRow(model = model, state = state)
+                        }
                     }
                     AdDivider()
                     Spacer(Modifier.height(9.dp))
@@ -349,13 +401,13 @@ fun SettingsScreen(state: AgentDeckState) {
                         Icon(Icons.Outlined.Storage, contentDescription = null, modifier = Modifier.size(12.dp), tint = Muted2)
                         Spacer(Modifier.width(5.dp))
                         Text(
-                            "${String.format(Locale.US, "%.1f", importedGB)} GB on device · ${locals.size} models known",
+                            "${String.format(Locale.US, "%.1f", importedGB)} GB on device · ${locals.size} model${if (locals.size == 1) "" else "s"} imported",
                             style = AdType.Tiny
                         )
                     }
                     Spacer(Modifier.height(7.dp))
                     Text(
-                        "UI prototype: the inference engine is not connected yet. The native build will load GGUF models on this phone. File changes and checks still use the execution host.",
+                        "Local replies are generated on this phone and never sent to a server. File changes and checks still use the execution host.",
                         fontSize = 9.5.sp,
                         lineHeight = 14.sp,
                         color = Muted2
@@ -470,7 +522,6 @@ fun SettingsScreen(state: AgentDeckState) {
 
             item { SettingsLabel("Backup & restore") }
             item {
-                val scope = rememberCoroutineScope()
                 val exportLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument("application/json")
                 ) { uri ->
@@ -534,7 +585,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     AdDivider()
                     SimpleSettingRow("Workspace", "Simulated · no code runs")
                     AdDivider()
-                    SimpleSettingRow("Local inference", "Preview · not connected")
+                    SimpleSettingRow("Local inference", if (LocalEngine.available) "llama.cpp · on this device" else "Unavailable")
                     AdDivider()
                     Row(
                         modifier = Modifier
@@ -581,7 +632,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     Text("AgentDeck", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Muted)
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        "AgentDeck $versionName. Cloud analysis is real when configured. Execution, diffs, checks, and local inference are simulated.",
+                        "AgentDeck $versionName. Cloud analysis is real when configured. Execution and checks need a host. Imported GGUF models run on this phone.",
                         fontSize = 9.5.sp,
                         lineHeight = 14.sp,
                         color = Muted2,
@@ -627,40 +678,55 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
                 AdTag(localState.label, tone.bg, tone.fg)
             }
             Text(
-                "${model.quantization} · ${model.sizeGB} GB · ${model.contextK}K context · ${model.minRamGB} GB RAM min",
+                buildString {
+                    append(model.quantization ?: "GGUF")
+                    model.sizeGB?.let { append(" · ${String.format(Locale.US, "%.2f", it)} GB") }
+                    append(" · ${model.contextK ?: 2}K context · on this device")
+                },
                 fontSize = 9.sp,
                 color = Muted2,
                 lineHeight = 13.sp
             )
         }
         Spacer(Modifier.width(8.dp))
-        when (localState) {
-            LocalModelState.READY -> AdButton(
-                "Unload",
-                onClick = { state.unloadLocalModel(model.id) },
-                kind = AdButtonKind.OUTLINE,
-                small = true
-            )
-            LocalModelState.UNLOADED -> AdButton(
-                "Load",
-                onClick = { state.loadLocalModel(model.id) },
-                small = true
-            )
-            LocalModelState.NOT_IMPORTED -> AdButton(
-                "Import",
-                onClick = { state.importLocalModel(model.id) },
-                icon = Icons.Outlined.Download,
-                small = true
-            )
-            LocalModelState.LOADING, LocalModelState.IMPORTING -> Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = BlueInk
+        Column(horizontalAlignment = Alignment.End) {
+            when (localState) {
+                LocalModelState.READY -> AdButton(
+                    "Unload",
+                    onClick = { state.unloadLocalModel(model.id) },
+                    kind = AdButtonKind.OUTLINE,
+                    small = true
                 )
-                Spacer(Modifier.width(5.dp))
-                Text(localState.label, fontSize = 10.5.sp, color = BlueInk)
+                LocalModelState.UNLOADED -> AdButton(
+                    "Load",
+                    onClick = { state.loadLocalModel(model.id) },
+                    small = true
+                )
+                LocalModelState.NOT_IMPORTED -> AdButton(
+                    "Load",
+                    onClick = { state.loadLocalModel(model.id) },
+                    small = true
+                )
+                LocalModelState.LOADING, LocalModelState.IMPORTING -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = BlueInk
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(localState.label, fontSize = 10.5.sp, color = BlueInk)
+                }
             }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Remove",
+                fontSize = 9.sp,
+                color = RedInk,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { state.removeLocalModel(model.id) }
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            )
         }
     }
 }

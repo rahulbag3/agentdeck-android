@@ -208,7 +208,7 @@ fun HomeScreen(state: AgentDeckState) {
 
             item {
                 Text(
-                    "Local workspace · execution simulated · local inference is a preview",
+                    "Local workspace · execution simulated · local GGUF runs on this phone",
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     fontSize = 9.5.sp,
@@ -243,7 +243,7 @@ private fun DemoNoticeCard(onDetails: () -> Unit, onDismiss: () -> Unit) {
                 Text("Local workspace", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "Cloud analysis uses your API key. Execution, diffs, checks, and local previews are simulated on this device until a host is connected.",
+                    "Cloud analysis uses your API key. Execution, diffs, and checks are simulated until a host is connected. Imported GGUF models run on this phone.",
                     style = AdType.Meta,
                     lineHeight = 15.sp
                 )

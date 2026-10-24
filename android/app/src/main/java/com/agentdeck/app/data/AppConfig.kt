@@ -44,6 +44,11 @@ class AppConfig(context: Context) {
         get() = prefs.getString(KEY_HOST_PLATFORM, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_HOST_PLATFORM, value).apply()
 
+    /** JSON catalogue of imported GGUF models. */
+    var localModelsJson: String
+        get() = prefs.getString(KEY_LOCAL_MODELS, "[]").orEmpty()
+        set(value) = prefs.edit().putString(KEY_LOCAL_MODELS, value).apply()
+
     fun clearHost() {
         prefs.edit()
             .remove(KEY_HOST_URL)
@@ -72,5 +77,6 @@ class AppConfig(context: Context) {
         private const val KEY_HOST_INSECURE = "host.allow-insecure-lan"
         private const val KEY_HOST_NAME = "host.name"
         private const val KEY_HOST_PLATFORM = "host.platform"
+        private const val KEY_LOCAL_MODELS = "local.models"
     }
 }
