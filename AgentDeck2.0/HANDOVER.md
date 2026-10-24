@@ -111,7 +111,7 @@ The user explicitly kept in scope:
   - Disconnecting while a host run is active stops the run and marks the task `Failed` with a retryable `Host disconnected` failure.
   - Reconnecting leaves tasks stopped until the user retries; a retry clears the old failure.
 - Cloud and GitHub configuration survives app restart.
-- Unit tests for persistence, Markdown parsing, cloud URL validation, provider-turn building, error classification, and backup codec (36 tests).
+- Unit tests for persistence, Markdown parsing, cloud URL validation, provider-turn building, error classification, and backup format (45 tests).
 - Debug APK builds successfully.
 
 ### Still simulated
@@ -198,8 +198,15 @@ The user explicitly kept in scope:
   counter and surfaces user-friendly failure text and activity labels.
 
 **Tests**
-- 36 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including new
-  `CloudErrorHandlingTest` (11 cases) and codec retry-attempt persistence.
+- 45 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
+  `CloudErrorHandlingTest` (11), `WorkspaceBackupTest` (9), and codec
+  retry-attempt persistence.
+- GitHub Actions (`.github/workflows/android.yml`) runs tests and assembles the
+  debug APK on pushes and PRs that touch `android/`.
+
+**Repository docs**
+- `README.md` covers features, privacy properties, build/release steps,
+  architecture, test inventory, and known limitations.
 
 ---
 
@@ -532,13 +539,14 @@ cd C:\Users\Rahul\Downloads\qoder\AgentDeck2.0\android
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
 ```
 
-JVM tests currently total 36 and all pass:
+JVM tests currently total 45 and all pass:
 
-- `TaskCodecTest` (6): task/message round-trip, defaults, ordering, damaged payloads, settings, retry attempts.
+- `TaskCodecTest` (5): task/message round-trip, defaults, ordering, damaged payloads, settings, retry attempts.
 - `MarkdownTest` (8): block/inline parsing, fences, escapes, link safety, empty input.
 - `CloudClientTest` (7): URL scheme/loopback rules, credentials/query rejection, endpoint construction, provider labels.
 - `CloudTurnsTest` (5): system exclusion, turn/history/character caps, and retry trailing-assistant removal.
 - `CloudErrorHandlingTest` (11): retryability, retry-button policy, backoff growth/cap, and failure labels.
+- `WorkspaceBackupTest` (9): round trip, format/version validation, skipped rows, defaults, empty backups.
 
 The debug APK also assembles successfully with the same command.
 

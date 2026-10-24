@@ -87,6 +87,12 @@ import java.util.Locale
 
 @Composable
 fun SettingsScreen(state: AgentDeckState) {
+    val context = LocalContext.current
+    val versionName = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "1.0.0"
+    }
     val host = state.data.host
     val online = host.connected
     val settings = state.data.settings
@@ -428,7 +434,6 @@ fun SettingsScreen(state: AgentDeckState) {
 
             item { SettingsLabel("Backup & restore") }
             item {
-                val context = LocalContext.current
                 val scope = rememberCoroutineScope()
                 val exportLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument("application/json")
@@ -546,7 +551,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     Text("AgentDeck", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Muted)
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        "MVP · v0.1.0. Cloud analysis is real when configured. Execution, diffs, checks, and local inference are simulated.",
+                        "AgentDeck $versionName. Cloud analysis is real when configured. Execution, diffs, checks, and local inference are simulated.",
                         fontSize = 9.5.sp,
                         lineHeight = 14.sp,
                         color = Muted2,
