@@ -22,6 +22,12 @@ class AppConfig(context: Context) {
         get() = prefs.getString(KEY_GITHUB_BRANCH, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_GITHUB_BRANCH, value).apply()
 
+    var appLockEnabled: Boolean
+        get() = prefs.getBoolean(KEY_APP_LOCK, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_APP_LOCK, value).commit()
+        }
+
     fun clearCloud() {
         prefs.edit().remove(KEY_CLOUD_BASE_URL).remove(KEY_CLOUD_MODEL).apply()
     }
@@ -36,5 +42,6 @@ class AppConfig(context: Context) {
         private const val KEY_CLOUD_MODEL = "cloud.model"
         private const val KEY_GITHUB_REPO = "github.repo"
         private const val KEY_GITHUB_BRANCH = "github.branch"
+        private const val KEY_APP_LOCK = "security.app-lock"
     }
 }
