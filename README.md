@@ -125,17 +125,30 @@ protocol and security notes.
 
 ### On-device models
 
-The app bundles a llama.cpp runtime (arm64-v8a and x86_64). Import a GGUF file
-from **Settings → On-device models → Import**, then **Load** it. Start a task
-with that model, or switch an existing local conversation to it with **Change**.
+The app bundles llama.cpp. Import a GGUF file from **Settings → On-device
+models → Import**, then **Load** it. Start a task with that model, or switch an
+existing local conversation to it with **Change**.
 
-- Prefer Q4_K_M models; 1–2B models need roughly 1–2 GB of RAM, larger models
-  may be killed by Android.
-- The model file is copied into app storage; remove it from Settings to reclaim
-  space. Models are not bundled with the APK.
-- The prebuilt native libraries live in `android/app/src/main/jniLibs/`. Rebuild
-  them with `tools/build-llama-android.sh` (pinned llama.cpp tag) if you change
-  the native bridge.
+Two APKs are available:
+
+```bash
+./gradlew :app:assembleDebug                 # standard: CPU, arm64 + x86_64
+./gradlew :app:assembleDebug -Psnapdragon    # Snapdragon GPU/NPU, arm64
+```
+
+- **Standard** includes llama.cpp's runtime-dispatch CPU variants
+  (`armv8.0` → `armv9.2`) and picks the best one for the phone at startup.
+- **Snapdragon** adds Adreno OpenCL and Hexagon NPU backends, selectable in
+  Settings → Acceleration. It requires OpenCL 3.0 and HTP v73+; on older
+  Snapdragon phones the native engine is unavailable (the rest of the app still
+  runs). Verified decode baseline on a Snapdragon 888 with the standard APK:
+  ~18 tokens/s for Llama 3.2 1B Q4_0.
+- Imported models are copied into app storage; none ship with the APK.
+  Prefer Q4_K_M; 1–2B models need roughly 1–2 GB of RAM.
+- Native sets live in `android/app/src/standard/jniLibs` and
+  `android/app/src/snapdragon/jniLibs`. Rebuild them with
+  `tools/fetch-llama-android.sh` (official release packages) and
+  `tools/build-llama-x86_64.sh` (emulator).
 
 ### Optional Firebase crash reporting
 
@@ -165,7 +178,9 @@ android/app/src/main/java/com/agentdeck/app/
 │   └── local/              Room entities, DAO, codec, backup
 ├── ui/                     Compose screens, sheets, Markdown renderer
 ├── cpp/                    llama_jni.cpp + llama/ggml headers
-└── jniLibs/                Prebuilt llama.cpp libraries per ABI
+├── standard/jniLibs/       CPU runtime-dispatch arm64 libraries
+├── snapdragon/jniLibs/     Adreno OpenCL + Hexagon NPU arm64 libraries
+└── main/jniLibs/x86_64/    Emulator libraries
 ```
 
 State flows one way: `AgentDeckState` mutates an immutable `AgentDeckData`
@@ -207,6 +222,13 @@ waits for hydration, and navigates to Settings. Run it against one device:
 ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest
 ```
 
+`LocalEngineDeviceTest` exercises the native engine and accelerators with a
+model readable by the app (e.g. pushed to `/data/local/tmp`):
+
+```bash
+adb shell am instrument -w   -e class com.agentdeck.app.LocalEngineDeviceTest#generateOnRequestedBackend   -e modelPath /data/local/tmp/model.gguf -e accelerator cpu   com.agentdeck.app.test/androidx.test.runner.AndroidJUnitRunner
+```
+
 CI runs the JVM tests, the host tests, and assembles the debug APK on every push
 to the default branch.
 
@@ -216,9 +238,9 @@ to the default branch.
   approved. Without a host, diffs and checks are simulated and labelled as such.
 - On-device quality depends entirely on the GGUF you import. Small or base
   models produce limited text; no model ships with the app.
-- Native inference supports CPU only (no GPU/NNAPI offload) and runs on one
-  model at a time per loaded model. Large models can be killed on low-RAM
-  devices.
+- Accelerated inference is only in the optional Snapdragon APK and depends on
+  the phone's OpenCL/HTP generation; the standard APK is CPU-only. One model
+  can be loaded at a time, and large models can be killed on low-RAM devices.
 - Cloud sends require connectivity. There is no automatic offline queue; the
   failure path and retry action are explicit.
 - In-app updates are not implemented; distribution signing is ready.

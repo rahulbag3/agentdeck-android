@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -9,9 +10,11 @@
 #include <vector>
 
 #include "llama.h"
+#include "ggml-backend.h"
 
 #define LOG_TAG "AgentDeckLlama"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 namespace {
 
@@ -23,10 +26,109 @@ struct Session {
     std::mutex mutex;
 };
 
+std::string listDevices();
+
 std::once_flag g_backend_once;
+std::mutex g_backend_name_mutex;
+std::string g_last_backend = "CPU";
+std::string g_backend_dir;
+
+void setLastBackend(const char * name) {
+    std::lock_guard<std::mutex> lock(g_backend_name_mutex);
+    g_last_backend = name != nullptr ? name : "CPU";
+}
 
 void ensureBackend() {
-    std::call_once(g_backend_once, [] { llama_backend_init(); });
+    std::call_once(g_backend_once, [] {
+        llama_log_set([](ggml_log_level level, const char * text, void *) {
+            int priority = ANDROID_LOG_INFO;
+            if (level == GGML_LOG_LEVEL_ERROR) priority = ANDROID_LOG_ERROR;
+            else if (level == GGML_LOG_LEVEL_WARN) priority = ANDROID_LOG_WARN;
+            else if (level == GGML_LOG_LEVEL_DEBUG) priority = ANDROID_LOG_DEBUG;
+            __android_log_print(priority, LOG_TAG, "%s", text);
+        }, nullptr);
+        // DL builds (the standard CPU package) load the best CPU variant here.
+        if (!g_backend_dir.empty()) {
+            LOGI("Loading ggml backends from %s", g_backend_dir.c_str());
+            ggml_backend_load_all_from_path(g_backend_dir.c_str());
+        }
+        llama_backend_init();
+        LOGI("Backends: %s", listDevices().c_str());
+    });
+}
+
+std::string lowerCopy(const char * value) {
+    std::string out = value != nullptr ? value : "";
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return out;
+}
+
+bool nameContains(ggml_backend_dev_t device, const char * needle) {
+    if (device == nullptr) return false;
+    const std::string name = lowerCopy(ggml_backend_dev_name(device));
+    const std::string description = lowerCopy(ggml_backend_dev_description(device));
+    return name.find(needle) != std::string::npos || description.find(needle) != std::string::npos;
+}
+
+bool isNpu(ggml_backend_dev_t device) {
+    return nameContains(device, "htp") || nameContains(device, "hexagon") ||
+        nameContains(device, "npu");
+}
+
+bool isGpu(ggml_backend_dev_t device) {
+    if (isNpu(device)) return false;
+    return nameContains(device, "gpu") || nameContains(device, "opencl") ||
+        nameContains(device, "adreno");
+}
+
+bool isCpu(ggml_backend_dev_t device) {
+    return nameContains(device, "cpu");
+}
+
+ggml_backend_dev_t pickDevice(const std::string & accelerator) {
+    ensureBackend();
+    ggml_backend_dev_t npu = nullptr;
+    ggml_backend_dev_t gpu = nullptr;
+    const size_t count = ggml_backend_dev_count();
+    for (size_t i = 0; i < count; i++) {
+        ggml_backend_dev_t device = ggml_backend_dev_get(i);
+        if (isNpu(device) && npu == nullptr) npu = device;
+        if (isGpu(device) && gpu == nullptr) gpu = device;
+    }
+    if (accelerator == "npu") return npu;
+    if (accelerator == "gpu") return gpu;
+    if (accelerator == "cpu") return nullptr;
+    if (npu != nullptr) return npu;
+    return gpu;
+}
+
+std::string listDevices() {
+    std::string out;
+    const size_t count = ggml_backend_dev_count();
+    for (size_t i = 0; i < count; i++) {
+        ggml_backend_dev_t device = ggml_backend_dev_get(i);
+        if (device == nullptr) continue;
+        if (!out.empty()) out += "|";
+        out += ggml_backend_dev_name(device);
+    }
+    return out.empty() ? "CPU" : out;
+}
+
+llama_model * loadModel(const std::string & path, ggml_backend_dev_t device, int32_t gpuLayers) {
+    llama_model_params params = llama_model_default_params();
+    ggml_backend_dev_t devices[2] = {device, nullptr};
+    if (device != nullptr) {
+        params.devices = devices;
+        params.n_gpu_layers = gpuLayers;
+    } else {
+        params.devices = nullptr;
+        params.n_gpu_layers = 0;
+    }
+    llama_model * model = llama_model_load_from_file(path.c_str(), params);
+    params.devices = nullptr;
+    return model;
 }
 
 std::string toUtf8(JNIEnv * env, jstring value) {
@@ -89,17 +191,27 @@ std::string buildPrompt(
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_agentdeck_app_data_LocalEngine_nativeLoad(
-    JNIEnv * env, jobject, jstring path, jint threads, jint contextSize) {
+    JNIEnv * env, jobject, jstring path, jint threads, jint contextSize, jstring accelerator) {
     ensureBackend();
     const std::string modelPath = toUtf8(env, path);
     if (modelPath.empty()) return 0;
 
+    const std::string requested = accelerator != nullptr
+        ? lowerCopy(toUtf8(env, accelerator).c_str())
+        : std::string("auto");
+    LOGI("Load model=%s accel=%s", modelPath.c_str(), requested.c_str());
+
     auto * session = new Session();
-    llama_model_params modelParams = llama_model_default_params();
-    modelParams.n_gpu_layers = 0;
-    session->model = llama_model_load_from_file(modelPath.c_str(), modelParams);
+    ggml_backend_dev_t device = pickDevice(requested);
+    session->model = loadModel(modelPath, device, 999);
+    if (session->model == nullptr && device != nullptr) {
+        // The accelerator refused this model/quant; keep the task usable on CPU.
+        device = nullptr;
+        session->model = loadModel(modelPath, nullptr, 0);
+    }
     if (session->model == nullptr) {
         LOGE("Failed to load model: %s", modelPath.c_str());
+        setLastBackend("CPU");
         delete session;
         return 0;
     }
@@ -110,14 +222,46 @@ Java_com_agentdeck_app_data_LocalEngine_nativeLoad(
     ctxParams.n_threads = threads > 0 ? threads : 4;
     ctxParams.n_threads_batch = ctxParams.n_threads;
     session->ctx = llama_init_from_model(session->model, ctxParams);
+    if (session->ctx == nullptr && device != nullptr) {
+        // Context creation can fail on a backend that loaded the weights.
+        llama_model_free(session->model);
+        device = nullptr;
+        session->model = loadModel(modelPath, nullptr, 0);
+        if (session->model != nullptr) {
+            session->ctx = llama_init_from_model(session->model, ctxParams);
+        }
+    }
     if (session->ctx == nullptr) {
         LOGE("Failed to create context");
-        llama_model_free(session->model);
+        if (session->model != nullptr) llama_model_free(session->model);
+        setLastBackend("CPU");
         delete session;
         return 0;
     }
     session->vocab = llama_model_get_vocab(session->model);
+    setLastBackend(device != nullptr ? ggml_backend_dev_name(device) : "CPU");
     return reinterpret_cast<jlong>(session);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_agentdeck_app_data_LocalEngine_nativeInit(JNIEnv * env, jobject, jstring backendDir) {
+    const std::string dir = toUtf8(env, backendDir);
+    if (!dir.empty()) {
+        g_backend_dir = dir;
+    }
+    ensureBackend();
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_agentdeck_app_data_LocalEngine_nativeDevices(JNIEnv * env, jobject) {
+    ensureBackend();
+    return env->NewStringUTF(listDevices().c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_agentdeck_app_data_LocalEngine_nativeLastBackend(JNIEnv * env, jobject) {
+    std::lock_guard<std::mutex> lock(g_backend_name_mutex);
+    return env->NewStringUTF(g_last_backend.c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL

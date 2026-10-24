@@ -48,8 +48,11 @@ jobs:
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --console=plain
 
-      - name: Assemble debug APK
+      - name: Assemble standard debug APK
         run: ./gradlew :app:assembleDebug --console=plain
+
+      - name: Assemble Snapdragon debug APK
+        run: ./gradlew :app:assembleDebug -Psnapdragon --console=plain
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

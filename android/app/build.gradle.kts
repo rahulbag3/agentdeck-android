@@ -14,6 +14,11 @@ if (hasFirebaseConfig) {
     apply(plugin = "com.google.firebase.crashlytics")
 }
 
+// Snapdragon GPU/NPU build is opt-in: -Psnapdragon selects the accelerated
+// arm64 libraries. The default build uses the official runtime-dispatch CPU set.
+val useSnapdragon = project.hasProperty("snapdragon")
+val llamaJniDir = "src/" + (if (useSnapdragon) "snapdragon" else "standard") + "/jniLibs"
+
 // Release signing is opt-in via android/keystore.properties, which is gitignored.
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
@@ -38,12 +43,14 @@ android {
         versionName = "1.0.0"
         resourceConfigurations += listOf("en")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        if (useSnapdragon) versionNameSuffix = "-snapdragon"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
         externalNativeBuild {
             cmake {
                 arguments += "-DANDROID_STL=c++_static"
+                arguments += "-DLLAMA_LIBS_BASE=$projectDir/$llamaJniDir"
             }
         }
     }
@@ -86,8 +93,16 @@ android {
         compose = true
     }
 
+    packaging {
+        jniLibs {
+            // Backend variants are dlopen'd by ggml from the native library dir.
+            useLegacyPackaging = true
+        }
+    }
+
     sourceSets {
         getByName("main") {
+            jniLibs.srcDir(llamaJniDir)
             kotlin.srcDir("build/generated/ksp/main/kotlin")
             kotlin.srcDir("build/generated/ksp/main/java")
         }

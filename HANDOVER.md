@@ -206,35 +206,54 @@ The user explicitly kept in scope:
   `agentdeck-root` is green.
 
 **On-device inference (llama.cpp)**
-- Vendored llama.cpp `b11851`, built with NDK 29 for `arm64-v8a` and `x86_64`,
-  CPU only (`GGML_NATIVE=OFF`). Prebuilt shared libraries are committed under
-  `android/app/src/main/jniLibs/<abi>/`; `tools/build-llama-android.sh`
-  reproduces them.
-- `app/src/main/cpp/llama_jni.cpp` exposes load/free/cancel/generate. Generation
-  applies the model's chat template (fallback: plain role transcript), samples
-  with top-k/top-p/temperature, streams pieces through a Kotlin callback, and
-  supports cancellation from another thread.
-- `LocalEngine.kt` is the Kotlin bridge; `LocalModelRegistry` persists imported
-  GGUF paths in `AppConfig` and validates that files still exist at startup.
-- Settings → On-device models imports a GGUF via SAF (copies into app storage,
-  validates the `GGUF` magic and a minimum size), shows real Load/Unload/Remove,
-  and reports `LLAMA.CPP` availability.
-- Real local replies stream into the task with model attribution and no
-  `Simulated` tag; activity uses `local-engine` and shows an `On device` badge.
-  The composer's Stop cancels generation and keeps the partial reply.
-- Generation uses a 2048-token context and 384 max new tokens on background
-  threads; unload/shutdown free native handles. Q4 1–2B models are the practical
-  target (1–2 GB RAM).
-- Verified on the x86_64 emulator with `stories15M-q4_0.gguf`: import → load →
-  switch an existing local task → prompt → streamed tokens → attribution and
-  `On device` activity. The tiny base model's text quality is limited, as
-  expected; the engine path itself is real.
-- R8/JNI: release builds keep `LocalEngine`, its native methods, and
-  `LocalEngine$TokenCallback` (including anonymous implementations). Without
-  those rules R8 renames `onToken` and generation crashes with
-  `NoSuchMethodError`; the JNI lookup now clears a lookup failure and returns
-  an error instead of crashing. The signed release APK (≈16 MB) was installed
-  and a generation was verified after the fix.
+- Two native sets, both pinned to llama.cpp `b11851`:
+  - **Standard** (`src/standard/jniLibs/arm64-v8a`): official Android CPU package
+    with runtime-dispatch variants (`armv8.0`, `armv8.2+dotprod`, `armv8.6+i8mm`,
+    `armv9.0`, `armv9.2`). `libllama` is DL-based; the JNI calls
+    `ggml_backend_load_all_from_path(nativeLibraryDir)` and the loader picks the
+    best variant for the CPU. Emulator x86_64 libs are built locally.
+  - **Snapdragon** (`src/snapdragon/jniLibs/arm64-v8a`): official Android
+    Snapdragon package with CPU, Adreno OpenCL, Hexagon NPU, and HTP skels
+    v73/75/79/81/85. Selected with `-Psnapdragon`.
+- `llama_jni.cpp` exposes load/free/cancel/generate plus `nativeInit`,
+  `nativeDevices`, and `nativeLastBackend`. It enumerates backends, selects
+  NPU/GPU/CPU from the user setting (Auto prefers NPU, then GPU), sets
+  `n_gpu_layers = 999` for accelerators, and retries on CPU if the accelerator
+  rejects the model or context.
+- Settings → Acceleration: Auto / NPU · Hexagon / GPU · Adreno / CPU, with the
+  detected backend list. Changing it requires reloading a model.
+- Packaging requirements discovered during integration:
+  - `<uses-native-library>` for `libOpenCL.so` and `libcdsprpc.so`; without it
+    vendor public libs are not in the app namespace.
+  - `packaging.jniLibs.useLegacyPackaging = true` so ggml can scan and dlopen
+    backend variants and HTP skels from the native library dir.
+  - Load `libOpenCL.so` explicitly before the JNI library on Snapdragon builds
+    (defensive; harmless elsewhere).
+  - Exclude `libggml-rpc.so` from the standard set: ggml auto-loads every
+    backend in the directory and the RPC backend deadlocks in-app.
+  - R8 keep rules for `LocalEngine`, native methods, and `TokenCallback`; JNI
+    clears a failed callback lookup instead of crashing. Verified in release.
+- Model import/catalogue, streaming, stop, attribution, and On-device badges
+  are unchanged from the earlier engine work.
+- Build commands:
+  - `./gradlew :app:assembleDebug` → standard (`app-debug-standard.apk`)
+  - `./gradlew :app:assembleDebug -Psnapdragon` → Snapdragon APK
+  - `tools/fetch-llama-android.sh` restores both arm64 sets from official
+    release packages; `tools/build-llama-x86_64.sh` rebuilds the emulator libs.
+- Verification:
+  - Standard APK on a Snapdragon 888 (Xiaomi): backends `CPU`, runtime selected
+    `libggml-cpu-android_armv8.2_2.so`, Llama 3.2 1B Q4_0 loaded in ~1.1 s and
+    generated 64 tokens at **18.0 tokens/s**.
+  - Snapdragon APK on the same phone: app launches and cloud/host features work,
+    but the native engine is unavailable because the 888's OpenCL 2.0 lacks
+    `clCreateBufferWithProperties` and its HTP is older than v73. Expected; the
+    Snapdragon APK targets newer chips.
+  - GPU/NPU verification is pending a modern Snapdragon (iQOO 13, HTP v79/81,
+    OpenCL 3.0). Testing needs that device connected; the x86_64 emulator cannot
+    exercise either backend.
+- Test hook: `LocalEngineDeviceTest` (instrumentation) lists backends and runs a
+  generation with `-e modelPath ... -e accelerator ...`. On MIUI, `/data/local/tmp`
+  is readable by the app even when `run-as` is blocked.
 
 **Host bridge (real execution)**
 - `tools/agentdeck-host/server.mjs` is a zero-dependency Node 18+ host agent.

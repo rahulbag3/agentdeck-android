@@ -47,6 +47,10 @@ class AgentDeckState(
     var modelImporting by mutableStateOf<String?>(null)
         private set
 
+    /** auto | npu | gpu | cpu — used when loading a GGUF. */
+    var accelerator by mutableStateOf("auto")
+        private set
+
     /** Tasks currently generating with a real local model. */
     var localGenerating by mutableStateOf(emptySet<String>())
         private set
@@ -148,6 +152,7 @@ class AgentDeckState(
                 )
             )
         }
+        accelerator = config.localAccelerator.takeIf { it in setOf("auto", "npu", "gpu", "cpu") } ?: "auto"
         importedModels = LocalModelRegistry.decode(config.localModelsJson)
             .filter { File(it.path).exists() }
         if (importedModels.isNotEmpty()) {
@@ -159,6 +164,7 @@ class AgentDeckState(
         newTaskDraft = newTaskDraft.copy(useRepoContext = githubConfig.configured)
         network.start { online = it }
         online = network.isOnline
+        LocalEngine.initialize(appContext.applicationInfo.nativeLibraryDir)
         appLockEnabled = config.appLockEnabled
         locked = appLockEnabled
         if (appLockEnabled) {
@@ -775,7 +781,7 @@ class AgentDeckState(
             modelJobs[modelId] = scope.launch {
                 val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
                 val handle = withContext(Dispatchers.Default) {
-                    LocalEngine.nativeLoad(imported.path, threads, LOCAL_CONTEXT_SIZE)
+                    LocalEngine.nativeLoad(imported.path, threads, LOCAL_CONTEXT_SIZE, accelerator)
                 }
                 val updated = model(modelId) ?: return@launch
                 if (updated.localState != LocalModelState.LOADING) {
@@ -788,7 +794,8 @@ class AgentDeckState(
                 } else {
                     localHandles[modelId] = handle
                     updateModel(modelId) { it.copy(localState = LocalModelState.READY) }
-                    toast("${imported.name} loaded on this phone")
+                    val backend = LocalEngine.lastBackend()
+                    toast("${imported.name} loaded · $backend")
                 }
             }
             return
@@ -904,6 +911,24 @@ class AgentDeckState(
     }
 
     fun isLocalStreaming(taskId: String): Boolean = taskId in localGenerating
+
+    fun selectAccelerator(value: String) {
+        if (value !in setOf("auto", "npu", "gpu", "cpu") || value == accelerator) return
+        accelerator = value
+        config.localAccelerator = value
+        val label = when (value) {
+            "npu" -> "NPU · Hexagon (experimental)"
+            "gpu" -> "GPU · Adreno"
+            "cpu" -> "CPU only"
+            else -> "Auto (NPU, then GPU)"
+        }
+        toast(
+            "Acceleration · $label" +
+                if (localHandles.isNotEmpty()) " · reload the model to apply" else ""
+        )
+    }
+
+    fun availableBackends(): List<String> = LocalEngine.devices()
 
     /** Stops real on-device generation; the partial reply is kept by the job. */
     fun stopLocalReply(taskId: String) {

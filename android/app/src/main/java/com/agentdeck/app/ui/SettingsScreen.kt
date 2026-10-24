@@ -380,6 +380,37 @@ fun SettingsScreen(state: AgentDeckState) {
                             enabled = state.modelImporting == null && LocalEngine.available
                         )
                     }
+                    Spacer(Modifier.height(10.dp))
+                    SettingsSelectRow(
+                        label = "Acceleration",
+                        value = when (state.accelerator) {
+                            "npu" -> "NPU · Hexagon"
+                            "gpu" -> "GPU · Adreno"
+                            "cpu" -> "CPU only"
+                            else -> "Auto (NPU, then GPU)"
+                        },
+                        options = listOf(
+                            "auto" to "Auto (NPU, then GPU)",
+                            "npu" to "NPU · Hexagon (experimental)",
+                            "gpu" to "GPU · Adreno (OpenCL)",
+                            "cpu" to "CPU only"
+                        ),
+                        selectedId = state.accelerator,
+                        onSelect = state::selectAccelerator
+                    )
+                    val backends = remember { runCatching { LocalEngine.devices() }.getOrDefault(emptyList()) }
+                    Text(
+                        "Backends: ${if (backends.isEmpty()) "CPU" else backends.joinToString(" · ")}",
+                        style = AdType.Tiny
+                    )
+                    if (state.accelerator == "npu" || state.accelerator == "auto") {
+                        Text(
+                            "NPU and GPU are used only when the device exposes a matching backend; otherwise the model loads on CPU.",
+                            fontSize = 9.5.sp,
+                            lineHeight = 14.sp,
+                            color = Muted2
+                        )
+                    }
                     if (locals.isEmpty()) {
                         Spacer(Modifier.height(10.dp))
                         Text(

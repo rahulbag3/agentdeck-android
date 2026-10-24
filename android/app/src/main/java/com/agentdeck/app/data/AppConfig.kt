@@ -49,6 +49,11 @@ class AppConfig(context: Context) {
         get() = prefs.getString(KEY_LOCAL_MODELS, "[]").orEmpty()
         set(value) = prefs.edit().putString(KEY_LOCAL_MODELS, value).apply()
 
+    /** auto | npu | gpu | cpu */
+    var localAccelerator: String
+        get() = prefs.getString(KEY_LOCAL_ACCELERATOR, "auto").orEmpty()
+        set(value) = prefs.edit().putString(KEY_LOCAL_ACCELERATOR, value).apply()
+
     fun clearHost() {
         prefs.edit()
             .remove(KEY_HOST_URL)
@@ -78,5 +83,6 @@ class AppConfig(context: Context) {
         private const val KEY_HOST_NAME = "host.name"
         private const val KEY_HOST_PLATFORM = "host.platform"
         private const val KEY_LOCAL_MODELS = "local.models"
+        private const val KEY_LOCAL_ACCELERATOR = "local.accelerator"
     }
 }
