@@ -220,13 +220,15 @@ internal object TaskCodec {
         put("body", permission.body)
         put("command", permission.command)
         put("pending", permission.pending)
+        put("requestId", permission.requestId ?: JSONObject.NULL)
     }
 
     private fun permissionFromJson(json: JSONObject) = PermissionRequest(
         title = json.optString("title"),
         body = json.optString("body"),
         command = json.optString("command"),
-        pending = json.optBoolean("pending", true)
+        pending = json.optBoolean("pending", true),
+        requestId = json.optStringOrNull("requestId")
     )
 
     private fun failureToJson(failure: Failure) = JSONObject().apply {

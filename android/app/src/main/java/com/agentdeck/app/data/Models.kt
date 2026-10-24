@@ -76,6 +76,18 @@ data class GitHubConfig(
     val configured: Boolean get() = GitHubClient.parseRepo(repo) != null
 }
 
+data class HostConfig(
+    val baseUrl: String = "",
+    val tokenSaved: Boolean = false,
+    val allowInsecureLan: Boolean = false,
+    val name: String = "",
+    val platform: String = "",
+    val projectIds: List<String> = emptyList()
+) {
+    val configured: Boolean get() = tokenSaved && baseUrl.isNotBlank()
+    val encrypted: Boolean get() = baseUrl.startsWith("https://")
+}
+
 sealed interface ConnectionTest {
     data object Idle : ConnectionTest
     data object Testing : ConnectionTest
@@ -157,7 +169,9 @@ data class PermissionRequest(
     val title: String,
     val body: String,
     val command: String,
-    val pending: Boolean = true
+    val pending: Boolean = true,
+    /** Host-assigned id for a live run; null for seeded/simulated requests. */
+    val requestId: String? = null
 )
 
 data class Failure(
@@ -295,6 +309,7 @@ sealed interface Sheet {
     data object DemoInfo : Sheet
     data object CloudSetup : Sheet
     data object GitHubSetup : Sheet
+    data object HostSetup : Sheet
     data class RepoContextSheet(val taskId: String) : Sheet
     data class TaskModels(val taskId: String) : Sheet
     data class Approve(val taskId: String) : Sheet
@@ -302,7 +317,7 @@ sealed interface Sheet {
     data class Confirm(val kind: ConfirmKind) : Sheet
 }
 
-enum class ConfirmKind { DISCONNECT, RESET, REMOVE_CLOUD, REMOVE_GITHUB }
+enum class ConfirmKind { DISCONNECT, RESET, REMOVE_CLOUD, REMOVE_GITHUB, REMOVE_HOST }
 
 enum class StatusFilter(val label: String) {
     ALL("All"),

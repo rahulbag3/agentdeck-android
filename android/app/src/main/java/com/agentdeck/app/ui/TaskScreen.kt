@@ -711,7 +711,9 @@ private fun ActivityCard(state: AgentDeckState, task: Task) {
                 task.activity.any { it.type == "cloud" || it.type == "cloud-error" }
             val hasLocalHistory = task.messages.any { it.provider == ModelProvider.LOCAL } ||
                 task.activity.any { it.type == "local" }
+            val hasLiveHostHistory = task.activity.any { it.type == "host" || it.type == "host-error" }
             when {
+                hasLiveHostHistory -> AdTag("Live host", com.agentdeck.app.ui.theme.GreenSoft, com.agentdeck.app.ui.theme.GreenInk)
                 hasCloudHistory && hasLocalHistory -> AdTag("Mixed", GraySoft, GrayInk)
                 hasCloudHistory -> CloudChip("Cloud")
                 else -> PreviewTag()
@@ -1037,7 +1039,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
         Surface(Modifier.fillMaxWidth(), color = AdSurface, border = BorderStroke(1.dp, Line)) {
             Column(Modifier.navigationBarsPadding().imePadding().padding(13.dp)) {
                 InfoBanner(
-                    title = "Studio Mac is offline",
+                    title = "${state.data.host.name} is offline",
                     text = "Reconnect to send messages to this host model.",
                     action = {
                         AdButton("Reconnect", onClick = state::reconnectHost, kind = AdButtonKind.OUTLINE, small = true)
@@ -1050,6 +1052,8 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
 
     var text by remember(task.id) { mutableStateOf("") }
     val streamingCloud = state.isCloudStreaming(task.id)
+    val streamingHost = state.isHostRunning(task.id)
+    val streaming = streamingCloud || streamingHost
     val retryCloud = state.canRetryCloudReply(task.id)
     val busy = state.isTaskBusy(task.id)
     val canSend = text.isNotBlank() && !busy
@@ -1140,20 +1144,24 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                         .clip(RoundedCornerShape(11.dp))
                         .background(
                             when {
-                                streamingCloud -> RedSoft
+                                streaming -> RedSoft
                                 canSend -> Ink
                                 else -> androidx.compose.ui.graphics.Color(0xFFE2E5E9)
                             }
                         )
-                        .clickable(enabled = streamingCloud || canSend) {
-                            if (streamingCloud) state.stopCloudReply(task.id) else send()
+                        .clickable(enabled = streaming || canSend) {
+                            when {
+                                streamingCloud -> state.stopCloudReply(task.id)
+                                streamingHost -> state.stopHostRun(task.id)
+                                else -> send()
+                            }
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     when {
-                        streamingCloud -> Icon(
+                        streaming -> Icon(
                             Icons.Outlined.Stop,
-                            contentDescription = "Stop generation",
+                            contentDescription = if (streamingHost) "Stop host run" else "Stop generation",
                             modifier = Modifier.size(17.dp),
                             tint = RedInk
                         )
@@ -1217,6 +1225,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                 Text(if (cloud) "Read-only analysis" else "Standard permissions", fontSize = 8.5.sp, color = Muted2)
             }
             val hint = when {
+                streamingHost -> "Host run in progress. Stop to cancel the agent on the host; reported changes stay."
                 streamingCloud -> "Cloud reply streaming. Stop to keep the partial reply; nothing is changed or run."
                 cloud -> "Nothing is changed or run. File changes, checks, and approvals require the host."
                 local -> if (state.canReachHost()) {

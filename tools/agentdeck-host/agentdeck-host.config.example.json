@@ -1,0 +1,17 @@
+{
+  "port": 8787,
+  "bind": "127.0.0.1",
+  "name": "Studio Mac",
+  "projects": [
+    {
+      "id": "orbit-api",
+      "name": "orbit-api",
+      "path": "C:/work/orbit-api"
+    }
+  ],
+  "agentCommand": ["aider", "--message", "{prompt}", "--yes"],
+  "checks": [
+    { "kind": "test", "name": "Unit tests", "command": ["pnpm", "test"] },
+    { "kind": "lint", "name": "Lint", "command": ["pnpm", "lint"] }
+  ]
+}

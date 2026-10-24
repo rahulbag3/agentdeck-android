@@ -22,7 +22,8 @@ class AgentDeckState(
     private val scope: CoroutineScope,
     context: Context,
     private val cloudClient: CloudClient = CloudClient(),
-    private val githubClient: GitHubClient = GitHubClient()
+    private val githubClient: GitHubClient = GitHubClient(),
+    private val hostClient: HostClient = HostClient()
 ) {
     private val secureStore = SecureStore(context.applicationContext)
     private val config = AppConfig(context.applicationContext)
@@ -54,9 +55,13 @@ class AgentDeckState(
         private set
     var githubConfig by mutableStateOf(GitHubConfig())
         private set
+    var hostConfig by mutableStateOf(HostConfig())
+        private set
     var cloudTest by mutableStateOf<ConnectionTest>(ConnectionTest.Idle)
         private set
     var githubTest by mutableStateOf<ConnectionTest>(ConnectionTest.Idle)
+        private set
+    var hostTest by mutableStateOf<ConnectionTest>(ConnectionTest.Idle)
         private set
 
     var screen by mutableStateOf<Screen>(Screen.Root(RootTab.HOME))
@@ -93,6 +98,9 @@ class AgentDeckState(
     private val cloudJobs = mutableMapOf<String, Job>()
     private val repoCache = mutableMapOf<String, RepoContext>()
 
+    /** Task ids whose current permission request belongs to a live host run. */
+    private val hostPermissions = mutableSetOf<String>()
+
     init {
         cloudConfig = CloudConfig(
             baseUrl = config.cloudBaseUrl,
@@ -104,6 +112,23 @@ class AgentDeckState(
             branch = config.githubBranch,
             tokenSaved = secureStore.get(SecureStore.GITHUB_TOKEN)?.isNotBlank() == true
         )
+        hostConfig = HostConfig(
+            baseUrl = config.hostBaseUrl,
+            tokenSaved = secureStore.get(SecureStore.HOST_TOKEN)?.isNotBlank() == true,
+            allowInsecureLan = config.hostAllowInsecureLan,
+            name = config.hostName,
+            platform = config.hostPlatform
+        )
+        if (hostConfig.configured) {
+            data = data.copy(
+                host = data.host.copy(
+                    name = hostConfig.name.ifBlank { data.host.name },
+                    platform = hostConfig.platform.ifBlank { data.host.platform },
+                    transport = if (hostConfig.encrypted) "HTTPS · token" else "LAN · token",
+                    connected = false
+                )
+            )
+        }
         data = data.copy(models = data.models + cloudModelOption())
         data = attributeAgentMessages(data)
         reconcileDefaultModel()
@@ -120,6 +145,12 @@ class AgentDeckState(
             androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
         }
         restoreWorkspace()
+        if (hostConfig.configured) {
+            scope.launch {
+                delay(700)
+                connectHost(announce = false)
+            }
+        }
     }
 
     // ----- app lock -----
@@ -751,6 +782,115 @@ class AgentDeckState(
         sheet = Sheet.GitHubSetup
     }
 
+    fun openHostSetup() {
+        hostTest = ConnectionTest.Idle
+        sheet = Sheet.HostSetup
+    }
+
+    /** Saves the host endpoint and token, then connects. Returns a validation error or null. */
+    fun saveHostConfig(baseUrl: String, token: String, allowInsecureLan: Boolean): String? {
+        val urlError = HostClient.baseUrlError(baseUrl, allowInsecureLan)
+        if (urlError != null) return urlError
+        val typedToken = token.trim()
+        val existing = secureStore.get(SecureStore.HOST_TOKEN)
+        if (typedToken.isEmpty() && existing.isNullOrBlank()) return "Enter the host token."
+        if (typedToken.isNotEmpty()) {
+            if (typedToken.length < 8 || typedToken.length > 512) return "That token doesn't look valid."
+            val saved = runCatching { secureStore.put(SecureStore.HOST_TOKEN, typedToken) }.isSuccess
+            if (!saved) return "Could not save the token securely on this device."
+        }
+        val url = baseUrl.trim().trimEnd('/')
+        config.hostBaseUrl = url
+        config.hostAllowInsecureLan = allowInsecureLan
+        hostConfig = hostConfig.copy(
+            baseUrl = url,
+            tokenSaved = true,
+            allowInsecureLan = allowInsecureLan
+        )
+        hostTest = ConnectionTest.Idle
+        sheet = null
+        scope.launch { connectHost(announce = true) }
+        return null
+    }
+
+    fun testHostConnection(baseUrl: String, token: String, allowInsecureLan: Boolean) {
+        if (hostTest is ConnectionTest.Testing) return
+        val urlError = HostClient.baseUrlError(baseUrl, allowInsecureLan)
+        val typedToken = token.trim().ifEmpty { secureStore.get(SecureStore.HOST_TOKEN).orEmpty() }
+        when {
+            urlError != null -> {
+                hostTest = ConnectionTest.Failure(urlError)
+                return
+            }
+            typedToken.isBlank() -> {
+                hostTest = ConnectionTest.Failure("Enter the host token.")
+                return
+            }
+        }
+        hostTest = ConnectionTest.Testing
+        scope.launch {
+            hostTest = hostClient.ping(baseUrl.trim().trimEnd('/'), typedToken).fold(
+                onSuccess = { info ->
+                    val access = if (baseUrl.trim().startsWith("https://")) "HTTPS" else "LAN"
+                    ConnectionTest.Success(
+                        "Connected · ${info.name} (${info.platform}, $access, ${info.projectIds.size} project${if (info.projectIds.size == 1) "" else "s"})"
+                    )
+                },
+                onFailure = { error -> ConnectionTest.Failure(error.message ?: "The host test failed.") }
+            )
+        }
+    }
+
+    fun removeHostConfig() {
+        secureStore.remove(SecureStore.HOST_TOKEN)
+        config.clearHost()
+        hostConfig = HostConfig()
+        hostTest = ConnectionTest.Idle
+        val seedHost = SeedData.create().host
+        data = data.copy(host = seedHost.copy(connected = false, lastSeen = System.currentTimeMillis()))
+        sheet = null
+        toast("Host removed · host execution is simulated")
+    }
+
+    private suspend fun connectHost(announce: Boolean): Boolean {
+        val token = secureStore.get(SecureStore.HOST_TOKEN)
+        if (!hostConfig.configured || token.isNullOrBlank()) {
+            data = data.copy(host = data.host.copy(connected = false))
+            if (announce) toast("Add a host URL and token first")
+            return false
+        }
+        return hostClient.ping(hostConfig.baseUrl, token).fold(
+            onSuccess = { info ->
+                val name = info.name.ifBlank { "Host" }
+                val platform = info.platform.ifBlank { "Unknown" }
+                config.hostName = name
+                config.hostPlatform = platform
+                hostConfig = hostConfig.copy(
+                    name = name,
+                    platform = platform,
+                    projectIds = info.projectIds,
+                    tokenSaved = true
+                )
+                data = data.copy(
+                    host = data.host.copy(
+                        name = name,
+                        platform = platform,
+                        transport = if (hostConfig.encrypted) "HTTPS · token" else "LAN · token",
+                        connected = true,
+                        lastSeen = System.currentTimeMillis()
+                    )
+                )
+                if (announce) toast("Connected to $name")
+                true
+            },
+            onFailure = { error ->
+                data = data.copy(host = data.host.copy(connected = false))
+                if (announce) toast(error.message ?: "Could not reach the host")
+                false
+            }
+        )
+    }
+
     fun openRepoContext(taskId: String) {
         if (task(taskId)?.repoContext == null) return
         sheet = Sheet.RepoContextSheet(taskId)
@@ -1110,7 +1250,10 @@ class AgentDeckState(
                 }
                 else -> {
                     startHostRun(newTask.id)
-                    toast("Task created · queued")
+                    toast(
+                        if (hostConfig.configured) "Host run started"
+                        else "Task created · simulated host"
+                    )
                 }
             }
         }
@@ -1704,18 +1847,47 @@ class AgentDeckState(
 
     fun allowPermission(taskId: String) {
         val task = task(taskId) ?: return
+        val request = task.permissionRequest ?: return
         if (!canReachHost()) {
-            toast("Reconnect Studio Mac before approving")
+            toast("Reconnect ${data.host.name} before approving")
             return
         }
-        val command = task.permissionRequest?.command ?: return
         val stamp = System.currentTimeMillis()
+        if (taskId in hostPermissions) {
+            val token = secureStore.get(SecureStore.HOST_TOKEN)
+            if (token.isNullOrBlank() || request.requestId.isNullOrBlank()) {
+                toast("This approval request is no longer valid")
+                return
+            }
+            updateTask(taskId) {
+                it.copy(
+                    permissionRequest = null,
+                    updatedAt = stamp,
+                    activity = it.activity + ActivityEvent("permission", "You allowed: ${request.command}", stamp)
+                )
+            }
+            scope.launch {
+                hostClient.decidePermission(
+                    hostConfig.baseUrl,
+                    token,
+                    taskId,
+                    request.requestId,
+                    allow = true
+                ).onFailure { error ->
+                    // The run stream surfaces terminal failures; a lost
+                    // approval POST should not clobber a running task.
+                    toast(error.message ?: "The host did not accept the approval.")
+                }
+            }
+            toast("Permission granted for this task only")
+            return
+        }
         updateTask(taskId) {
             it.copy(
                 status = TaskStatus.IN_PROGRESS,
                 permissionRequest = null,
                 updatedAt = stamp,
-                activity = it.activity + ActivityEvent("permission", "You allowed: $command", stamp)
+                activity = it.activity + ActivityEvent("permission", "You allowed: ${request.command}", stamp)
             )
         }
         startHostRun(taskId)
@@ -1725,11 +1897,34 @@ class AgentDeckState(
     fun declinePermission(taskId: String) {
         val task = task(taskId) ?: return
         if (!canReachHost()) {
-            toast("Reconnect Studio Mac before responding")
+            toast("Reconnect ${data.host.name} before responding")
             return
         }
-        if (task.permissionRequest == null) return
+        val request = task.permissionRequest ?: return
         val stamp = System.currentTimeMillis()
+        if (taskId in hostPermissions) {
+            val token = secureStore.get(SecureStore.HOST_TOKEN)
+            updateTask(taskId) {
+                it.copy(
+                    permissionRequest = null,
+                    updatedAt = stamp,
+                    activity = it.activity + ActivityEvent("permission", "You declined the host request", stamp)
+                )
+            }
+            if (!token.isNullOrBlank() && !request.requestId.isNullOrBlank()) {
+                scope.launch {
+                    hostClient.decidePermission(
+                        hostConfig.baseUrl,
+                        token,
+                        taskId,
+                        request.requestId,
+                        allow = false
+                    )
+                }
+            }
+            toast("Request declined")
+            return
+        }
         updateTask(taskId) {
             it.copy(
                 permissionRequest = null,
@@ -1757,14 +1952,16 @@ class AgentDeckState(
             return
         }
         if (!canReachHost()) {
-            toast("Reconnect Studio Mac before retrying")
+            toast("Reconnect ${data.host.name} before retrying")
             return
         }
         val stamp = System.currentTimeMillis()
+        hostPermissions.remove(taskId)
         updateTask(taskId) {
             it.copy(
                 status = TaskStatus.IN_PROGRESS,
                 failure = null,
+                permissionRequest = null,
                 updatedAt = stamp,
                 activity = it.activity + ActivityEvent("status", "Retry requested", stamp)
             )
@@ -1833,6 +2030,219 @@ class AgentDeckState(
 
     private fun startHostRun(taskId: String) {
         val initial = task(taskId) ?: return
+        if (isLocalTask(initial) || isCloudTask(initial)) return
+        if (hostConfig.configured) {
+            startLiveHostRun(taskId)
+        } else {
+            startSimulatedHostRun(taskId)
+        }
+    }
+
+    /**
+     * Streams a real run from the configured host agent: approval gate, agent
+     * output, file diffs, checks, and a terminal state.
+     */
+    private fun startLiveHostRun(taskId: String) {
+        val task = task(taskId) ?: return
+        val token = secureStore.get(SecureStore.HOST_TOKEN)
+        if (!hostConfig.configured || token.isNullOrBlank()) {
+            hostFailure(taskId, "The host is not configured. Connect it in Settings.")
+            return
+        }
+        if (!canReachHost()) {
+            hostFailure(taskId, "${data.host.name} is not reachable. Reconnect in Settings, then retry.")
+            return
+        }
+        hostJobs.remove(taskId)?.cancel()
+        hostPermissions.remove(taskId)
+        hostJobs[taskId] = scope.launch {
+            val self = currentCoroutineContext()[Job]
+            val start = System.currentTimeMillis()
+            updateTask(taskId) {
+                it.copy(
+                    status = TaskStatus.IN_PROGRESS,
+                    updatedAt = start,
+                    activeRun = true,
+                    failure = null,
+                    permissionRequest = null,
+                    plan = activateFirstStep(it.plan),
+                    activity = it.activity + ActivityEvent("host", "Sent to ${data.host.name}", start)
+                )
+            }
+            val result = hostClient.run(
+                baseUrl = hostConfig.baseUrl,
+                token = token,
+                taskId = taskId,
+                projectId = task.projectId,
+                prompt = task.prompt,
+                branch = task.branch,
+                turns = buildCloudTurns(task.messages)
+            ) { event -> handleHostEvent(taskId, event) }
+
+            result.exceptionOrNull()?.let { error ->
+                // A newer run may have replaced this job; only the current job
+                // may move the task to a failed state.
+                if (hostJobs[taskId] === self) {
+                    val current = task(taskId)
+                    if (current != null && current.status == TaskStatus.IN_PROGRESS) {
+                        hostFailure(taskId, error.message ?: "The host run failed.")
+                    }
+                }
+            }
+            if (hostJobs[taskId] === self) {
+                hostJobs.remove(taskId)
+                hostPermissions.remove(taskId)
+                updateTask(taskId) { current ->
+                    if (current.status == TaskStatus.IN_PROGRESS) {
+                        current.copy(activeRun = false, updatedAt = System.currentTimeMillis())
+                    } else {
+                        current.copy(activeRun = false)
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun handleHostEvent(taskId: String, event: HostEvent) {
+        val now = System.currentTimeMillis()
+        when (event) {
+            is HostEvent.Plan -> updateTask(taskId) {
+                it.copy(plan = event.steps, updatedAt = now)
+            }
+            is HostEvent.Status -> updateTask(taskId) {
+                it.copy(
+                    activity = it.activity + ActivityEvent("host", event.text, now),
+                    updatedAt = now
+                )
+            }
+            is HostEvent.Message -> updateTask(taskId) {
+                it.copy(
+                    messages = it.messages + Message(
+                        id = newMessageId(),
+                        role = MessageRole.AGENT,
+                        text = event.text,
+                        at = now,
+                        modelName = data.host.name,
+                        provider = ModelProvider.HOST
+                    ),
+                    updatedAt = now
+                )
+            }
+            is HostEvent.File -> {
+                val lines = HostDiff.parse(event.file.diff)
+                val file = ChangedFile(
+                    id = "file-" + UUID.randomUUID().toString().take(8),
+                    path = event.file.path,
+                    changeType = event.file.changeType,
+                    additions = lines.count { it.type == DiffLineType.ADD },
+                    deletions = lines.count { it.type == DiffLineType.DELETE },
+                    language = event.file.language,
+                    diffLines = lines
+                )
+                updateTask(taskId) {
+                    it.copy(
+                        changedFiles = it.changedFiles.filterNot { old -> old.path == file.path } + file,
+                        activity = it.activity + ActivityEvent("host", "Changed ${file.path}", now),
+                        updatedAt = now
+                    )
+                }
+            }
+            is HostEvent.Check -> {
+                val check = CheckRun(
+                    id = checkId(),
+                    type = event.check.kind,
+                    name = event.check.name,
+                    status = if (event.check.passed) CheckStatus.PASSED else CheckStatus.FAILED,
+                    summary = event.check.summary,
+                    command = event.check.command,
+                    duration = event.check.duration,
+                    output = event.check.output
+                )
+                updateTask(taskId) {
+                    it.copy(
+                        checks = it.checks + check,
+                        activity = it.activity + ActivityEvent(
+                            "check",
+                            "${check.name} · ${if (event.check.passed) "passed" else "failed"}",
+                            now
+                        ),
+                        updatedAt = now
+                    )
+                }
+            }
+            is HostEvent.Permission -> {
+                hostPermissions.add(taskId)
+                updateTask(taskId) {
+                    it.copy(
+                        permissionRequest = PermissionRequest(
+                            title = event.title,
+                            body = event.body,
+                            command = event.command,
+                            pending = true,
+                            requestId = event.requestId
+                        ),
+                        activity = it.activity + ActivityEvent("permission", "Approval requested", now),
+                        updatedAt = now
+                    )
+                }
+            }
+            is HostEvent.Done -> {
+                hostPermissions.remove(taskId)
+                val failed = event.status.equals("failed", ignoreCase = true)
+                updateTask(taskId) {
+                    it.copy(
+                        status = if (failed) TaskStatus.FAILED else TaskStatus.REVIEW,
+                        activeRun = false,
+                        permissionRequest = null,
+                        plan = if (failed) failActivePlan(it.plan) else completePlan(it.plan),
+                        activity = it.activity + ActivityEvent(
+                            "host",
+                            event.summary.ifBlank { "Run finished" },
+                            now
+                        ),
+                        updatedAt = now
+                    )
+                }
+                if (!isViewingTask(taskId)) {
+                    toast("“${task(taskId)?.title ?: "Task"}” is ready for review")
+                }
+            }
+            is HostEvent.Failure -> hostFailure(taskId, event.message)
+        }
+    }
+
+    private fun hostFailure(taskId: String, message: String) {
+        val current = task(taskId) ?: return
+        if (current.status == TaskStatus.REVIEW || current.status == TaskStatus.COMPLETED) return
+        val now = System.currentTimeMillis()
+        hostPermissions.remove(taskId)
+        updateTask(taskId) {
+            it.copy(
+                status = TaskStatus.FAILED,
+                activeRun = false,
+                permissionRequest = null,
+                failure = Failure(
+                    title = "Host run failed",
+                    summary = message,
+                    detail = "The host reported this error. Review the task, check the host terminal, then retry.",
+                    at = now
+                ),
+                messages = it.messages + Message(
+                    id = newMessageId(),
+                    role = MessageRole.SYSTEM,
+                    text = "Host run failed\n$message",
+                    at = now
+                ),
+                activity = it.activity + ActivityEvent("host-error", "Host run failed", now),
+                plan = failActivePlan(it.plan),
+                updatedAt = now
+            )
+        }
+        toast("Host run failed · ${message.take(80)}")
+    }
+
+    private fun startSimulatedHostRun(taskId: String) {
+        val initial = task(taskId) ?: return
         if (isLocalTask(initial) || isCloudTask(initial) || !canReachHost()) return
         hostJobs.remove(taskId)?.cancel()
         hostJobs[taskId] = scope.launch {
@@ -1852,7 +2262,7 @@ class AgentDeckState(
                         modelName = model(it.modelId)?.name,
                         provider = ModelProvider.HOST
                     ),
-                    activity = it.activity + ActivityEvent("status", "Started on ${data.host.name}", stamp),
+                    activity = it.activity + ActivityEvent("status", "Started on ${data.host.name} (simulated)", stamp),
                     plan = activateFirstStep(it.plan)
                 )
             }
@@ -1879,7 +2289,7 @@ class AgentDeckState(
                         provider = ModelProvider.HOST
                     ),
                     activity = current.activity + listOf(
-                        ActivityEvent("test", "Ran checks — ${checks.count { it.status == CheckStatus.PASSED }} passed", finish),
+                        ActivityEvent("test", "Ran checks — ${checks.count { it.status == CheckStatus.PASSED }} passed (simulated)", finish),
                         ActivityEvent("status", "Moved to review", finish)
                     ),
                     plan = completePlan(current.plan)
@@ -1920,8 +2330,19 @@ class AgentDeckState(
             .map { it.id }
             .toSet()
 
+        if (hostConfig.configured) {
+            val token = secureStore.get(SecureStore.HOST_TOKEN)
+            if (!token.isNullOrBlank()) {
+                stoppedIds.forEach { taskId ->
+                    scope.launch {
+                        hostClient.cancel(hostConfig.baseUrl, token, taskId)
+                    }
+                }
+            }
+        }
         hostJobs.values.forEach { it.cancel() }
         hostJobs.clear()
+        hostPermissions.clear()
 
         data = data.copy(
             host = data.host.copy(connected = false, lastSeen = now),
@@ -1933,6 +2354,7 @@ class AgentDeckState(
                         status = TaskStatus.FAILED,
                         updatedAt = now,
                         activeRun = false,
+                        permissionRequest = null,
                         plan = failActivePlan(task.plan),
                         failure = Failure(
                             title = "Host disconnected",
@@ -1959,11 +2381,55 @@ class AgentDeckState(
     }
 
     fun reconnectHost() {
-        data = data.copy(host = data.host.copy(connected = true, lastSeen = System.currentTimeMillis()))
-        toast("Studio Mac connected")
+        if (!hostConfig.configured) {
+            openHostSetup()
+            toast("Add your host URL and token to connect")
+            return
+        }
+        scope.launch { connectHost(announce = true) }
+    }
+
+    fun isHostRunning(taskId: String): Boolean = hostJobs[taskId]?.isActive == true
+
+    /** Stops a live host run and asks the host to kill the agent process tree. */
+    fun stopHostRun(taskId: String) {
+        if (taskId !in hostPermissions && hostJobs[taskId]?.isActive != true) return
+        val job = hostJobs.remove(taskId)
+        job?.cancel()
+        hostPermissions.remove(taskId)
+        val token = secureStore.get(SecureStore.HOST_TOKEN)
+        if (hostConfig.configured && !token.isNullOrBlank()) {
+            scope.launch { hostClient.cancel(hostConfig.baseUrl, token, taskId) }
+        }
+        val now = System.currentTimeMillis()
+        updateTask(taskId) {
+            it.copy(
+                status = TaskStatus.NEEDS_INPUT,
+                activeRun = false,
+                permissionRequest = null,
+                updatedAt = now,
+                plan = failActivePlan(it.plan),
+                activity = it.activity + ActivityEvent("host", "Stopped by you", now),
+                messages = it.messages + Message(
+                    id = newMessageId(),
+                    role = MessageRole.SYSTEM,
+                    text = "Host run stopped\nYou stopped this run. Changes already reported by the host stay in the task. Retry when you are ready.",
+                    at = now
+                )
+            )
+        }
+        toast("Host run stopped")
     }
 
     fun resetDemo() {
+        if (hostConfig.configured) {
+            val token = secureStore.get(SecureStore.HOST_TOKEN)
+            if (!token.isNullOrBlank()) {
+                hostJobs.keys.toList().forEach { taskId ->
+                    scope.launch { hostClient.cancel(hostConfig.baseUrl, token, taskId) }
+                }
+            }
+        }
         hostJobs.values.forEach { it.cancel() }
         localJobs.values.forEach { it.cancel() }
         modelJobs.values.forEach { it.cancel() }
@@ -1972,9 +2438,11 @@ class AgentDeckState(
         localJobs.clear()
         modelJobs.clear()
         cloudJobs.clear()
+        hostPermissions.clear()
         repoCache.clear()
+        val hostSnapshot = data.host
         data = SeedData.create()
-        data = data.copy(models = data.models + cloudModelOption())
+        data = data.copy(models = data.models + cloudModelOption(), host = hostSnapshot)
         data = attributeAgentMessages(data)
         reconcileDefaultModel()
         lastPersisted = null

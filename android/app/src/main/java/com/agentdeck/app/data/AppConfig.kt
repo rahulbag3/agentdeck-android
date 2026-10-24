@@ -28,6 +28,31 @@ class AppConfig(context: Context) {
             prefs.edit().putBoolean(KEY_APP_LOCK, value).commit()
         }
 
+    var hostBaseUrl: String
+        get() = prefs.getString(KEY_HOST_URL, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_HOST_URL, value).apply()
+
+    var hostAllowInsecureLan: Boolean
+        get() = prefs.getBoolean(KEY_HOST_INSECURE, false)
+        set(value) = prefs.edit().putBoolean(KEY_HOST_INSECURE, value).apply()
+
+    var hostName: String
+        get() = prefs.getString(KEY_HOST_NAME, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_HOST_NAME, value).apply()
+
+    var hostPlatform: String
+        get() = prefs.getString(KEY_HOST_PLATFORM, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_HOST_PLATFORM, value).apply()
+
+    fun clearHost() {
+        prefs.edit()
+            .remove(KEY_HOST_URL)
+            .remove(KEY_HOST_INSECURE)
+            .remove(KEY_HOST_NAME)
+            .remove(KEY_HOST_PLATFORM)
+            .apply()
+    }
+
     fun clearCloud() {
         prefs.edit().remove(KEY_CLOUD_BASE_URL).remove(KEY_CLOUD_MODEL).apply()
     }
@@ -43,5 +68,9 @@ class AppConfig(context: Context) {
         private const val KEY_GITHUB_REPO = "github.repo"
         private const val KEY_GITHUB_BRANCH = "github.branch"
         private const val KEY_APP_LOCK = "security.app-lock"
+        private const val KEY_HOST_URL = "host.base-url"
+        private const val KEY_HOST_INSECURE = "host.allow-insecure-lan"
+        private const val KEY_HOST_NAME = "host.name"
+        private const val KEY_HOST_PLATFORM = "host.platform"
     }
 }

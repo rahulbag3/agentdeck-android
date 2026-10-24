@@ -113,6 +113,7 @@ fun SettingsScreen(state: AgentDeckState) {
         ) {
             item { SettingsLabel("Execution host") }
             item {
+                val live = state.hostConfig.configured
                 AdCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -126,38 +127,73 @@ fun SettingsScreen(state: AgentDeckState) {
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(host.name, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
-                            Text("${host.platform} · ${host.transport}", style = AdType.Tiny)
+                            Text(
+                                if (live) host.name else "No host connected",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink
+                            )
+                            Text(
+                                if (live) "${host.platform} · ${host.transport}"
+                                else "Tasks stay simulated until you connect",
+                                style = AdType.Tiny
+                            )
                         }
                         AdTag(
-                            if (online) "Connected" else "Offline",
-                            if (online) GreenSoft else AmberSoft,
-                            if (online) GreenInk else AmberInk
+                            when {
+                                !live -> "Not set"
+                                online -> "Connected"
+                                else -> "Offline"
+                            },
+                            when {
+                                !live -> GraySoft
+                                online -> GreenSoft
+                                else -> AmberSoft
+                            },
+                            when {
+                                !live -> GrayInk
+                                online -> GreenInk
+                                else -> AmberInk
+                            }
                         )
                     }
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        if (online) {
-                            "Last seen ${relativeTime(host.lastSeen)}. Host models and all task execution use this simulated host."
-                        } else {
-                            "Host tasks are stopped and can be retried. On-device chat remains available."
+                        when {
+                            !live -> "Connect the AgentDeck host agent to run tasks, collect diffs, and execute checks on your computer. Without a host, those steps are simulated."
+                            online -> "Live host · last seen ${relativeTime(host.lastSeen)}. Tasks run your configured agent CLI on the host."
+                            else -> "Host tasks are stopped and can be retried. On-device chat remains available."
                         },
                         style = AdType.Meta
                     )
                     Spacer(Modifier.height(11.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (online) {
-                            AdButton(
-                                "Disconnect",
-                                onClick = { state.openConfirm(ConfirmKind.DISCONNECT) },
-                                kind = AdButtonKind.OUTLINE,
-                                small = true
-                            )
-                        } else {
-                            AdButton("Reconnect host", onClick = state::reconnectHost, small = true)
+                        when {
+                            !live -> AdButton("Set up host", onClick = state::openHostSetup, small = true)
+                            online -> {
+                                AdButton(
+                                    "Disconnect",
+                                    onClick = { state.openConfirm(ConfirmKind.DISCONNECT) },
+                                    kind = AdButtonKind.OUTLINE,
+                                    small = true
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                AdButton("Host settings", onClick = state::openHostSetup, kind = AdButtonKind.OUTLINE, small = true)
+                            }
+                            else -> {
+                                AdButton("Reconnect host", onClick = state::reconnectHost, small = true)
+                                Spacer(Modifier.width(8.dp))
+                                AdButton("Host settings", onClick = state::openHostSetup, kind = AdButtonKind.OUTLINE, small = true)
+                            }
                         }
-                        Spacer(Modifier.width(10.dp))
-                        Text("Host state is simulated", style = AdType.Tiny)
+                    }
+                    if (live) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            if (state.hostConfig.encrypted) "Token encrypted on this device · HTTPS"
+                            else "Token encrypted on this device · unencrypted LAN",
+                            style = AdType.Tiny
+                        )
                     }
                 }
             }

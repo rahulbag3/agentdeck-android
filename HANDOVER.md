@@ -62,7 +62,8 @@ The user explicitly kept in scope:
   - Diff viewer
   - Sheets for projects, models, approvals, requests, confirmations, demo info
 - Local-model UI states and simulated on-device replies.
-- Host connection/offline states and simulated host execution.
+- Host connection/offline states. Execution is real when the bundled host agent
+  is connected and the run is approved; otherwise it is simulated and labelled.
 - Cloud BYOK:
   - Settings card and setup sheet.
   - OpenAI-compatible `/chat/completions` client.
@@ -123,13 +124,12 @@ The user explicitly kept in scope:
 
 ### Still missing
 
-- A real host bridge or execution protocol.
 - A real llama.cpp/GGUF inference engine.
 - Multiple saved cloud endpoints/models.
-- A "apply this analysis with the host" workflow.
 - In-app update mechanism and Play Store listing.
 - Automatic offline send queue (cloud sends fail fast with a retry path instead).
-- Integration/E2E tests on CI; unit coverage now includes error mapping and codec retry persistence.
+- Integration/E2E tests on CI; unit coverage now includes error mapping, host
+  diff parsing, and codec retry persistence.
 
 ### Production hardening (2026-10-24)
 
@@ -206,6 +206,34 @@ The user explicitly kept in scope:
 - GitHub Actions runs unit tests and assembles the debug APK; the run on
   `agentdeck-root` is green.
 
+**Host bridge (real execution)**
+- `tools/agentdeck-host/server.mjs` is a zero-dependency Node 18+ host agent.
+  It creates `agentdeck-host.config.json` on first run with a generated token,
+  project paths, an agent command, and checks.
+- Endpoints (Bearer token required): `GET /v1/ping`, `POST /v1/run` (SSE),
+  `POST /v1/permission`, `POST /v1/cancel`. Events: `plan`, `status`,
+  `message`, `file`, `check`, `permission`, `done`, `error`, plus heartbeats.
+- A run streams a plan, asks for approval in the app (120s timeout = decline),
+  runs the configured agent CLI in the project folder, streams stdout/stderr,
+  collects `git diff HEAD` (up to 8 files / 200k chars), runs checks
+  sequentially (180s each), and ends in review. Cancel kills the process tree.
+- Security: localhost bind by default, token on every request, project roots
+  and commands come only from host config, no arbitrary commands from the phone.
+  LAN mode is opt-in (`--host 0.0.0.0` plus "Allow unencrypted LAN" in the app);
+  HTTPS via a tunnel is recommended off-LAN.
+- Android: `data/HostClient.kt` (SSE + permission/cancel/ping), `data/HostDiff.kt`
+  (unified diff → DiffLine), host fields in `AppConfig`/`SecureStore`
+  (`host.token`), and `AgentDeckState.startLiveHostRun`/`handleHostEvent`.
+  With no host configured, host tasks stay simulated and are labelled as such.
+- Settings → Execution host: setup sheet with URL, token, insecure-LAN toggle,
+  test, save & connect, reconnect, and remove. The host card shows live/offline
+  state; `Live host` appears on tasks that produced real host events.
+- Verified end-to-end on the emulator against a local Windows host: connect,
+  create task, approve, real file change on disk, streamed diff and check,
+  review state, and a clean second run with no stale failures. Earlier stale-job
+  and 204-response bugs were fixed.
+- Host protocol tests: 9 (`node --test tools/agentdeck-host/server.test.mjs`).
+
 **Product copy**
 - Demo framing is gone: the header chip reads `LOCAL`, the home notice is
   "Local workspace" with an explicit statement that cloud analysis is real and
@@ -215,9 +243,10 @@ The user explicitly kept in scope:
 - Reset is "Reset workspace"; the footer shows the real package version.
 
 **Tests**
-- 45 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
-  `CloudErrorHandlingTest` (11), `WorkspaceBackupTest` (9), and codec
-  retry-attempt persistence.
+- 58 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
+  `CloudErrorHandlingTest` (11), `WorkspaceBackupTest` (9), `HostClientTest` (8),
+  `HostDiffTest` (5), and codec retry-attempt persistence.
+- Host agent: 9 protocol tests pass (`node --test tools/agentdeck-host/server.test.mjs`).
 - `androidTest/AppSmokeTest` launches the app, waits for hydration, and opens
   Settings. Verified green on the `agentdeck` AVD:
   `ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest`.
@@ -353,9 +382,10 @@ Preserve these unless the user explicitly changes direction.
 1. **Cloud inference is not execution.**
    - Cloud tasks can analyze, plan, and propose patches.
    - They must never claim to write files, run commands, run tests, merge, or deploy.
-2. **Execution remains host-gated.**
+2. **Execution is host-gated.**
    - File changes, checks, and approvals are associated with the execution host.
-   - The current host is simulated.
+   - A connected host agent performs real work; without one, host execution is
+     simulated and must stay labelled as simulated.
 3. **Local inference is still simulated.**
    - Do not present local replies as real model output.
 4. **No gateway for personal BYOK.**
@@ -561,7 +591,7 @@ cd C:\Users\Rahul\Downloads\qoder\AgentDeck2.0\android
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
 ```
 
-JVM tests currently total 45 and all pass:
+JVM tests currently total 58 and all pass:
 
 - `TaskCodecTest` (5): task/message round-trip, defaults, ordering, damaged payloads, settings, retry attempts.
 - `MarkdownTest` (8): block/inline parsing, fences, escapes, link safety, empty input.
@@ -569,6 +599,12 @@ JVM tests currently total 45 and all pass:
 - `CloudTurnsTest` (5): system exclusion, turn/history/character caps, and retry trailing-assistant removal.
 - `CloudErrorHandlingTest` (11): retryability, retry-button policy, backoff growth/cap, and failure labels.
 - `WorkspaceBackupTest` (9): round trip, format/version validation, skipped rows, defaults, empty backups.
+- `HostClientTest` (8): host URL policy, insecure-LAN opt-in, endpoint building, loopback rules.
+- `HostDiffTest` (5): hunk parsing, line numbering, header skipping, no-newline markers, line caps.
+
+Host protocol tests total 9 (`node --test tools/agentdeck-host/server.test.mjs`):
+token auth, approval, denial, no-agent inspection mode, missing project,
+diff parsing, check results, cancellation, and command templating.
 
 The debug APK also assembles successfully with the same command.
 
@@ -594,6 +630,23 @@ The test mock server and this round's test app data were removed after verificat
   - A `Host disconnected` failure card and system notice appeared.
   - Retry remained available.
 - Reconnected, retried the host task, and confirmed it returned to `Review`; the failure card was cleared while the historical system notice remained in the transcript.
+
+### Host bridge verification
+
+- Ran the host agent on Windows against a temporary git repo whose agent command
+  appends to `app.txt`, with one Node check.
+- Connected the emulator to `http://10.0.2.2:8787` with the host token from
+  Settings → Execution host.
+- Created a host task and approved the prompt. Confirmed:
+  - host plan, output, and `Live host` activity streamed into the task;
+  - the file on disk actually changed (`git diff HEAD` shows the addition);
+  - the app showed 1 changed file with the real diff and 1 passed check;
+  - the task moved to Review with no failure card.
+- Repeated with a second task after fixing two bugs found in the first round:
+  a cancelled stale job could overwrite a newer run, and Node 204 responses with
+  a body broke the approval POST.
+- The composer shows Stop during a host run; cancellation is covered by the
+  host protocol test and POSTs `/v1/cancel` to kill the process tree.
 
 ### Error handling improvements (current session)
 

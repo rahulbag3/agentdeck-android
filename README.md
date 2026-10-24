@@ -24,8 +24,11 @@ with cloud analysis over your own API key, straight from the phone.
   ready local model without starting a new task.
 - **GitHub context** — attach a read-only snapshot (README, manifests, relevant
   sources) to a cloud analysis task. Public repos work without a token.
-- **Review flow** — diffs, check results, approve or request changes; host
-  execution is represented and clearly labelled as simulated.
+- **Real host execution (optional)** — connect the bundled host agent on your
+  computer and tasks run your own agent CLI in the project folder. Approvals,
+  streamed output, real `git` diffs, and checks come back to the phone. Without
+  a host, execution is clearly labelled as simulated.
+- **Review flow** — diffs, check results, approve or request changes.
 - **Persistence** — tasks, conversations, plans, checks, diffs, and settings are
   stored on-device in Room and survive restarts, rotation, and interrupted runs.
 - **Resilience** — structured cloud errors, automatic retry with backoff, an
@@ -39,6 +42,9 @@ with cloud analysis over your own API key, straight from the phone.
   the Android Keystore. Only ciphertext is written to SharedPreferences.
 - Requests go directly from the phone to the endpoint you configure. There is
   no AgentDeck relay, gateway, or account.
+- Host execution is gated by a per-host bearer token and an approval prompt on
+  every run. The host never accepts arbitrary commands from the phone: the
+  agent CLI and checks come from the host's own config file.
 - GitHub access is read-only (contents and metadata). The token is never sent to
   the model.
 - Repository content is treated as untrusted data by the cloud system prompt.
@@ -88,6 +94,32 @@ Then:
 Release builds enable R8 minification and resource shrinking. Without a
 keystore the release build is unsigned but still minified.
 
+### Host execution (optional)
+
+The app runs tasks on your computer through a zero-dependency Node agent:
+
+```bash
+cd tools/agentdeck-host
+node server.mjs --project "C:/work/orbit-api"
+```
+
+On first run it creates `agentdeck-host.config.json`, generates a token, and
+prints both. Add your agent CLI and checks to the config, for example:
+
+```json
+"agentCommand": ["aider", "--message", "{prompt}", "--yes"],
+"checks": [
+  { "kind": "test", "name": "Unit tests", "command": ["pnpm", "test"] }
+]
+```
+
+Then in AgentDeck: **Settings → Execution host → Set up host**, enter
+`http://<computer-IP>:8787` (run the host with `--host 0.0.0.0` for LAN) and the
+token. For http:// LAN hosts, enable **Allow unencrypted LAN**; prefer HTTPS via
+a tunnel on untrusted networks. See
+[tools/agentdeck-host/README.md](tools/agentdeck-host/README.md) for the full
+protocol and security notes.
+
 ### Optional Firebase crash reporting
 
 Create a Firebase Android app for `com.agentdeck.app`, download
@@ -119,9 +151,17 @@ State flows one way: `AgentDeckState` mutates an immutable `AgentDeckData`
 snapshot, a persistence loop writes changed snapshots to Room about once per
 second, and interrupted runs are reconciled on restore instead of staying stuck.
 
+```
+tools/agentdeck-host/
+├── server.mjs                      Zero-dependency host agent + protocol
+├── server.test.mjs                 Protocol tests (node --test)
+├── agentdeck-host.config.example.json
+└── README.md                       Setup, protocol, security notes
+```
+
 ## Tests
 
-45 JVM unit tests cover:
+58 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
@@ -129,6 +169,14 @@ second, and interrupted runs are reconciled on restore instead of staying stuck.
 - Provider turn building and retry history trimming
 - Cloud error classification, retryability, and backoff
 - Workspace backup format, validation, and skipped rows
+- Host URL policy, endpoint building, and unified-diff parsing
+
+The host agent has 9 protocol tests (auth, approval, denial, inspection mode,
+diff collection, checks, cancellation, diff parsing):
+
+```bash
+node --test tools/agentdeck-host/server.test.mjs
+```
 
 An instrumentation smoke test (`AppSmokeTest`) launches the app on a device,
 waits for hydration, and navigates to Settings. Run it against one device:
@@ -137,13 +185,13 @@ waits for hydration, and navigates to Settings. Run it against one device:
 ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-CI runs unit tests and assembles the debug APK on every push to the default
-branch.
+CI runs the JVM tests, the host tests, and assembles the debug APK on every push
+to the default branch.
 
 ## Known limitations
 
-- Host execution, file diffs, checks, approvals, and local inference are
-  simulated by design. Cloud analysis is real when an endpoint is configured.
+- Execution is real only when a host agent is connected and the run is
+  approved. Without a host, diffs and checks are simulated and labelled as such.
 - The local model catalogue is a UI preview; there is no on-device inference
   engine yet.
 - Cloud sends require connectivity. There is no automatic offline queue; the

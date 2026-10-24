@@ -73,6 +73,7 @@ class SecureStore(context: Context) {
     companion object {
         const val CLOUD_API_KEY = "cloud.api-key"
         const val GITHUB_TOKEN = "github.token"
+        const val HOST_TOKEN = "host.token"
         private const val KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = "agentdeck.secrets.v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"

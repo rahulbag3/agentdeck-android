@@ -42,6 +42,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -115,6 +116,7 @@ fun AgentDeckSheetHost(state: AgentDeckState) {
                 is Sheet.DemoInfo -> DemoInfoSheet(state)
                 is Sheet.CloudSetup -> CloudSetupSheet(state)
                 is Sheet.GitHubSetup -> GitHubSetupSheet(state)
+                is Sheet.HostSetup -> HostSetupSheet(state)
                 is Sheet.RepoContextSheet -> RepoContextSheet(state, sheet.taskId)
                 is Sheet.TaskModels -> TaskModelsSheet(state, sheet.taskId)
                 is Sheet.Approve -> ApproveSheet(state, sheet.taskId)
@@ -721,6 +723,119 @@ private fun CloudSetupSheet(state: AgentDeckState) {
 }
 
 @Composable
+private fun HostSetupSheet(state: AgentDeckState) {
+    val cfg = state.hostConfig
+    var baseUrl by remember { mutableStateOf(cfg.baseUrl.ifBlank { "http://192.168.1.10:8787" }) }
+    var token by remember { mutableStateOf("") }
+    var allowInsecure by remember { mutableStateOf(cfg.allowInsecureLan) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    SheetHeader(
+        title = "Execution host",
+        subtitle = "Run tasks on your computer with the AgentDeck host agent.",
+        onClose = { state.showSheet(null) }
+    )
+    Spacer(Modifier.height(12.dp))
+    if (cfg.tokenSaved) {
+        InfoBanner(
+            title = "Host token saved",
+            text = "Encrypted with Android Keystore. Enter a new token only when rotating it.",
+            kind = BannerKind.DONE
+        )
+        Spacer(Modifier.height(12.dp))
+    }
+
+    SheetFormLabel("Host URL")
+    AdTextField(
+        value = baseUrl,
+        onValueChange = { baseUrl = it; error = null },
+        placeholder = "http://192.168.1.10:8787",
+        mono = true,
+        singleLine = true
+    )
+    Spacer(Modifier.height(11.dp))
+    SheetFormLabel("Access token")
+    AdTextField(
+        value = token,
+        onValueChange = { token = it; error = null },
+        placeholder = if (cfg.tokenSaved) "Saved · enter a new token to replace" else "Printed by the host on startup",
+        secret = true,
+        singleLine = true
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(9.dp))
+            .clickable { allowInsecure = !allowInsecure }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Allow unencrypted LAN", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+            Text(
+                "Needed for http:// hosts on a trusted network. Prefer HTTPS or a tunnel.",
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                color = Muted
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Switch(checked = allowInsecure, onCheckedChange = { allowInsecure = it; error = null })
+    }
+    Spacer(Modifier.height(8.dp))
+    TestFeedback(state.hostTest)
+    if (error != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(error!!, fontSize = 10.5.sp, lineHeight = 15.sp, color = RedInk)
+    }
+    Spacer(Modifier.height(10.dp))
+    Text(
+        "The host runs your configured agent CLI in a project folder and streams output, diffs, and checks back. The app never sends arbitrary commands to your computer.",
+        fontSize = 9.5.sp,
+        lineHeight = 14.sp,
+        color = Muted2
+    )
+    Spacer(Modifier.height(13.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AdButton(
+            if (state.hostTest is ConnectionTest.Testing) "Testing…" else "Test",
+            onClick = {
+                error = null
+                state.testHostConnection(baseUrl, token, allowInsecure)
+            },
+            modifier = Modifier.weight(1f),
+            kind = AdButtonKind.OUTLINE,
+            enabled = state.hostTest !is ConnectionTest.Testing
+        )
+        AdButton(
+            "Save & connect",
+            onClick = {
+                error = state.saveHostConfig(baseUrl, token, allowInsecure)
+                if (error == null) token = ""
+            },
+            modifier = Modifier.weight(1f),
+            enabled = baseUrl.isNotBlank() && (token.isNotBlank() || cfg.tokenSaved)
+        )
+    }
+    if (cfg.configured) {
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { state.showSheet(Sheet.Confirm(ConfirmKind.REMOVE_HOST)) }
+                .padding(vertical = 8.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(14.dp), tint = RedInk)
+            Spacer(Modifier.width(6.dp))
+            Text("Remove host from this device", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = RedInk)
+        }
+    }
+}
+
+@Composable
 private fun GitHubSetupSheet(state: AgentDeckState) {
     val cfg = state.githubConfig
     var repo by remember { mutableStateOf(cfg.repo) }
@@ -1150,18 +1265,21 @@ private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
         ConfirmKind.RESET -> "Reset workspace?"
         ConfirmKind.REMOVE_CLOUD -> "Remove cloud API?"
         ConfirmKind.REMOVE_GITHUB -> "Remove GitHub connection?"
+        ConfirmKind.REMOVE_HOST -> "Remove this host?"
     }
     val body = when (kind) {
         ConfirmKind.DISCONNECT -> "Running host tasks will stop with a retryable error. Messages cannot be sent until you reconnect. Execution is simulated on this device."
         ConfirmKind.RESET -> "This deletes every local task, message, change, check result, decision, and model state, then restores the sample workspace. It cannot be undone. Cloud and GitHub settings are kept."
         ConfirmKind.REMOVE_CLOUD -> "This deletes the saved API key and endpoint settings from this phone. Existing cloud tasks keep their messages but cannot continue until you connect a cloud API again."
         ConfirmKind.REMOVE_GITHUB -> "This deletes the saved repository settings and token. Existing tasks keep the context snapshot they already fetched."
+        ConfirmKind.REMOVE_HOST -> "This deletes the saved host URL and token. Host tasks fall back to simulated execution until you connect a host again."
     }
     val confirmLabel = when (kind) {
         ConfirmKind.DISCONNECT -> "Disconnect"
         ConfirmKind.RESET -> "Reset workspace"
         ConfirmKind.REMOVE_CLOUD -> "Remove cloud API"
         ConfirmKind.REMOVE_GITHUB -> "Remove GitHub"
+        ConfirmKind.REMOVE_HOST -> "Remove host"
     }
     SheetHeader(
         title = title,
@@ -1185,6 +1303,7 @@ private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
                     ConfirmKind.RESET -> state.resetDemo()
                     ConfirmKind.REMOVE_CLOUD -> state.removeCloudConfig()
                     ConfirmKind.REMOVE_GITHUB -> state.removeGitHubConfig()
+                    ConfirmKind.REMOVE_HOST -> state.removeHostConfig()
                 }
             },
             modifier = Modifier.weight(1f),
