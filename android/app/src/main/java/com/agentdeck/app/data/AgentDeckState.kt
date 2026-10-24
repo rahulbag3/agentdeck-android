@@ -37,6 +37,15 @@ class AgentDeckState(
     var online by mutableStateOf(true)
         private set
 
+    /** Biometric/device-credential gate for the whole app. */
+    var appLockEnabled by mutableStateOf(false)
+        private set
+
+    var locked by mutableStateOf(false)
+        private set
+
+    private var appLockObserver: androidx.lifecycle.LifecycleEventObserver? = null
+
     /** False until saved tasks have been restored, so the UI never flashes demo data. */
     var hydrated by mutableStateOf(false)
         private set
@@ -101,7 +110,47 @@ class AgentDeckState(
         newTaskDraft = newTaskDraft.copy(useRepoContext = githubConfig.configured)
         network.start { online = it }
         online = network.isOnline
+        appLockEnabled = config.appLockEnabled
+        locked = appLockEnabled
+        if (appLockEnabled) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) locked = true
+            }
+            appLockObserver = observer
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+        }
         restoreWorkspace()
+    }
+
+    // ----- app lock -----
+
+    fun enableAppLock(enabled: Boolean) {
+        appLockEnabled = enabled
+        config.appLockEnabled = enabled
+        locked = enabled
+        if (enabled && appLockObserver == null) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) locked = true
+            }
+            appLockObserver = observer
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+        } else if (!enabled) {
+            appLockObserver?.let {
+                androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.removeObserver(it)
+            }
+            appLockObserver = null
+        }
+        toast(if (enabled) "App lock on · uses your device screen lock" else "App lock off")
+    }
+
+    fun lockNow() {
+        if (!appLockEnabled) return
+        locked = true
+        sheet = null
+    }
+
+    fun unlockApp() {
+        locked = false
     }
 
     /** Cancels every in-flight job and stops connectivity callbacks. */
@@ -114,6 +163,10 @@ class AgentDeckState(
         cloudJobs.clear()
         repoCache.clear()
         network.stop()
+        appLockObserver?.let {
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.removeObserver(it)
+        }
+        appLockObserver = null
     }
 
     // ----- persistence -----

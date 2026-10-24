@@ -161,6 +161,23 @@ The user explicitly kept in scope:
   drives an offline pill above the bottom bar on root screens. Verified on the
   emulator by disabling/enabling radios.
 
+**App lock (security)**
+- Optional biometric / device-credential gate covering the whole app, toggled in
+  Settings → Security. Default is off.
+- `ProcessLifecycleOwner` re-locks on app background (config changes do not
+  trigger a lock). The lock screen auto-opens the system prompt after a short
+  focus delay and always offers an Unlock button.
+- If the device has no screen lock, the lock screen explains why and offers
+  "Turn off app lock" so the user can never be locked out.
+- `MainActivity` now extends `FragmentActivity` because `BiometricPrompt`
+  requires it; dependencies are `androidx.biometric:biometric:1.1.0`,
+  `androidx.fragment:fragment-ktx:1.8.5`, and
+  `androidx.lifecycle:lifecycle-process:2.8.6`.
+- Verified on the emulator: enabling, PIN unlock, background re-lock, relaunch
+  auto-prompt, PIN removal fallback, and disabling.
+- `SecureStore.put`/`remove` now commit synchronously so "key saved" is durable
+  before the UI reports success.
+
 **Backup & restore**
 - Settings → Backup & restore exports a portable JSON workspace (tasks,
   messages, diffs, checks, decisions, settings) through the system file picker.

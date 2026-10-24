@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -40,6 +41,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -364,6 +366,63 @@ fun SettingsScreen(state: AgentDeckState) {
                     PermissionRow(Icons.Outlined.Cloud, VioletSoft, VioletInk, "Cloud analysis is read-only", "Selected code goes to your API. Nothing is changed or run.")
                     PermissionRow(Icons.Outlined.Code, GreenSoft, GreenInk, "GitHub access is read-only", "Contents and metadata only. No writes, ever.")
                     PermissionRow(Icons.Outlined.Close, RedSoft, RedInk, "Merge, deploy, or change settings", "Never allowed from a task.", isLast = true)
+                }
+            }
+
+            item { SettingsLabel("Security") }
+            item {
+                AdCard(padding = 4.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { state.enableAppLock(!state.appLockEnabled) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(29.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(AmberSoft),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Outlined.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp),
+                                tint = AmberInk
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("App lock", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text(
+                                "Require your device screen lock to open AgentDeck.",
+                                fontSize = 10.sp,
+                                color = Muted,
+                                lineHeight = 14.sp
+                            )
+                        }
+                        Switch(
+                            checked = state.appLockEnabled,
+                            onCheckedChange = state::enableAppLock
+                        )
+                    }
+                    if (state.appLockEnabled) {
+                        AdDivider()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { state.lockNow() }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(15.dp), tint = AmberInk)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Lock now", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AmberInk)
+                        }
+                    }
                 }
             }
 

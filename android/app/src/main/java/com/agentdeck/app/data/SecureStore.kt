@@ -25,7 +25,8 @@ class SecureStore(context: Context) {
         val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
         val payload = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) +
             ":" + Base64.encodeToString(encrypted, Base64.NO_WRAP)
-        prefs.edit().putString(key, payload).apply()
+        // Commit synchronously: callers report the key as saved right after this.
+        prefs.edit().putString(key, payload).commit()
     }
 
     fun get(key: String): String? {
@@ -44,7 +45,7 @@ class SecureStore(context: Context) {
     }
 
     fun remove(key: String) {
-        prefs.edit().remove(key).apply()
+        prefs.edit().remove(key).commit()
     }
 
     fun clear() {
