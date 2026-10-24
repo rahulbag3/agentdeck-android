@@ -197,6 +197,23 @@ The user explicitly kept in scope:
 - `AgentDeckState.streamCloudReply()` persists a per-task `retryAttempts`
   counter and surfaces user-friendly failure text and activity labels.
 
+**Repository layout**
+- GitHub default branch: `agentdeck-root`, with the app at the repository root
+  (`android/`, `README.md`, `.github/workflows/android.yml`).
+- The workspace `C:\Users\Rahul\Downloads\qoder\AgentDeck2.0` is now its own git
+  repository tracking `origin/agentdeck-root`. The parent `qoder` repo (`main`)
+  is legacy and is no longer the source of truth.
+- GitHub Actions runs unit tests and assembles the debug APK; the run on
+  `agentdeck-root` is green.
+
+**Product copy**
+- Demo framing is gone: the header chip reads `LOCAL`, the home notice is
+  "Local workspace" with an explicit statement that cloud analysis is real and
+  execution/diffs/checks are simulated, and the info sheet is "How this works".
+- The placeholder account/sign-out flow was removed; Settings shows a local
+  profile with no account.
+- Reset is "Reset workspace"; the footer shows the real package version.
+
 **Tests**
 - 45 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
   `CloudErrorHandlingTest` (11), `WorkspaceBackupTest` (9), and codec
