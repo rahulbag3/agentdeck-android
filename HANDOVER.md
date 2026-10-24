@@ -1,9 +1,11 @@
 # AgentDeck — engineering handover
 
-**Date:** 2026-10-23  
+**Date:** 2026-10-24  
 **Workspace:** `C:\Users\Rahul\Downloads\qoder\AgentDeck2.0`  
 **Primary target:** Android-only native Kotlin/Jetpack Compose rebuild  
-**Current build:** `android/app/build/outputs/apk/debug/app-debug.apk` (debug, unsigned, v0.1.0)
+**Current build:** `android/app/build/outputs/apk/release/app-release.apk` (signed, R8, v1.0.0)  
+**Debug build:** `android/app/build/outputs/apk/debug/app-debug.apk`  
+**GitHub:** https://github.com/rahulbag3/agentdeck-android
 
 > This file is for an engineering agent continuing the work. It records the current state, product boundaries, verification evidence, environment quirks, and recommended next steps.
 
@@ -109,7 +111,7 @@ The user explicitly kept in scope:
   - Disconnecting while a host run is active stops the run and marks the task `Failed` with a retryable `Host disconnected` failure.
   - Reconnecting leaves tasks stopped until the user retries; a retry clears the old failure.
 - Cloud and GitHub configuration survives app restart.
-- Unit tests for persistence, Markdown parsing, cloud URL validation, and provider-turn building (24 tests).
+- Unit tests for persistence, Markdown parsing, cloud URL validation, provider-turn building, error classification, and backup codec (36 tests).
 - Debug APK builds successfully.
 
 ### Still simulated
@@ -125,8 +127,62 @@ The user explicitly kept in scope:
 - A real llama.cpp/GGUF inference engine.
 - Multiple saved cloud endpoints/models.
 - A "apply this analysis with the host" workflow.
-- Broader automated tests and CI; current coverage is focused on persistence, Markdown, cloud URL validation, and provider-turn building.
-- Release signing and store packaging.
+- In-app update mechanism and Play Store listing.
+- Automatic offline send queue (cloud sends fail fast with a retry path instead).
+- Integration/E2E tests on CI; unit coverage now includes error mapping and codec retry persistence.
+
+### Production hardening (2026-10-24)
+
+**Release distribution**
+- Signed release builds. Signing material lives in `android/keystore.properties`
+  and `android/app/agentdeck-release.jks`; both are gitignored and must never be
+  committed. The keystore password is stored only in `keystore.properties`.
+- Release builds enable R8 minification and resource shrinking (APK ≈ 2.1 MB).
+  `proguard-rules.pro` keeps the Room entry point and source line numbers.
+- `versionName` is now `1.0.0`.
+- Play Store AAB: `./gradlew :app:bundleRelease`.
+- Signing is opt-in: without `keystore.properties`, release builds are unsigned
+  but still minified.
+
+**Crash reporting**
+- Firebase Crashlytics + Analytics wired behind an opt-in check for
+  `google-services.json`; debug builds and fresh clones work without Firebase.
+- `data/Logger.kt` writes to logcat and forwards warnings/errors to Crashlytics
+  with custom context keys. Every Crashlytics call is guarded; logging can never
+  crash the app.
+- Setup: create a Firebase Android app for `com.agentdeck.app`, drop the real
+  `google-services.json` into `android/app/`, then rebuild.
+
+**Lifecycle and connectivity**
+- `AgentDeckViewModel.onCleared()` calls `AgentDeckState.shutdown()`, which
+  cancels host/local/model/cloud jobs, clears caches, and unregisters the
+  connectivity callback.
+- `NetworkMonitor` registers a default `NetworkCallback`; `AgentDeckState.online`
+  drives an offline pill above the bottom bar on root screens. Verified on the
+  emulator by disabling/enabling radios.
+
+**Backup & restore**
+- Settings → Backup & restore exports a portable JSON workspace (tasks,
+  messages, diffs, checks, decisions, settings) through the system file picker.
+  API keys and tokens are excluded — they remain in the Keystore.
+- Import validates the format/version, replaces the stored workspace in one
+  transaction, re-validates project/model IDs, and recovers interrupted runs.
+- Import is refused while a request is in flight.
+- Verified on the emulator: exported 54 KB / 12 tasks, re-imported, database
+  showed 12 tasks and restored settings.
+
+**Error handling**
+- `CloudError` sealed hierarchy (network, HTTP, auth, rate limit, timeout,
+  validation, invalid response) with `isRetryable`.
+- `CloudClient` retries transient failures only while no reply text has been
+  delivered, so a retry cannot duplicate a partial stream. Backoff:
+  1s → 2s → 4s → 8s → 10s cap.
+- `AgentDeckState.streamCloudReply()` persists a per-task `retryAttempts`
+  counter and surfaces user-friendly failure text and activity labels.
+
+**Tests**
+- 36 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including new
+  `CloudErrorHandlingTest` (11 cases) and codec retry-attempt persistence.
 
 ---
 
@@ -302,6 +358,26 @@ Artifact:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### Release build
+
+```bash
+./gradlew :app:assembleRelease   # signed APK when keystore.properties exists
+./gradlew :app:bundleRelease     # Play Store AAB
+```
+
+Signing reads `android/keystore.properties`:
+
+```properties
+storeFile=app/agentdeck-release.jks
+storePassword=…
+keyAlias=agentdeck
+keyPassword=…
+```
+
+Both the `.jks` and `keystore.properties` are gitignored. Back them up
+somewhere safe — losing the key prevents updates to the installed app.
+
+
 ### Start the emulator
 
 ```bash
@@ -439,12 +515,13 @@ cd C:\Users\Rahul\Downloads\qoder\AgentDeck2.0\android
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
 ```
 
-JVM tests currently total 24 and all pass:
+JVM tests currently total 36 and all pass:
 
-- `TaskCodecTest` (4): task/message round-trip, defaults, and ordering.
+- `TaskCodecTest` (6): task/message round-trip, defaults, ordering, damaged payloads, settings, retry attempts.
 - `MarkdownTest` (8): block/inline parsing, fences, escapes, link safety, empty input.
 - `CloudClientTest` (7): URL scheme/loopback rules, credentials/query rejection, endpoint construction, provider labels.
 - `CloudTurnsTest` (5): system exclusion, turn/history/character caps, and retry trailing-assistant removal.
+- `CloudErrorHandlingTest` (11): retryability, retry-button policy, backoff growth/cap, and failure labels.
 
 The debug APK also assembles successfully with the same command.
 

@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -44,15 +45,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.launch
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.ConfirmKind
 import com.agentdeck.app.data.LocalModelState
@@ -361,10 +367,66 @@ fun SettingsScreen(state: AgentDeckState) {
                 }
             }
 
-            item { SettingsLabel("Demo data") }
+            item { SettingsLabel("Backup & restore") }
+            item {
+                val context = LocalContext.current
+                val scope = rememberCoroutineScope()
+                val exportLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument("application/json")
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    scope.launch {
+                        val json = runCatching { state.exportBackupJson() }.getOrNull()
+                        if (json == null) {
+                            state.notifyUser("Could not build the backup")
+                            return@launch
+                        }
+                        val saved = runCatching {
+                            context.contentResolver.openOutputStream(uri)?.use { output ->
+                                output.write(json.toByteArray(Charsets.UTF_8))
+                            } ?: error("No output stream")
+                        }.isSuccess
+                        state.notifyUser(if (saved) "Backup saved" else "Could not save the backup")
+                    }
+                }
+                val importLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    scope.launch {
+                        val text = runCatching {
+                            context.contentResolver.openInputStream(uri)
+                                ?.bufferedReader(Charsets.UTF_8)
+                                ?.readText()
+                        }.getOrNull()
+                        if (text == null) {
+                            state.notifyUser("Could not read that file")
+                            return@launch
+                        }
+                        state.notifyUser(state.importBackup(text) ?: "Backup imported")
+                    }
+                }
+                AdCard(padding = 4.dp) {
+                    ActionRow(
+                        icon = Icons.Outlined.Download,
+                        title = "Export workspace",
+                        subtitle = "Tasks, messages, diffs, and settings as JSON. API keys and tokens stay on this device.",
+                        onClick = { exportLauncher.launch("agentdeck-backup.json") }
+                    )
+                    AdDivider()
+                    ActionRow(
+                        icon = Icons.Outlined.Upload,
+                        title = "Import workspace",
+                        subtitle = "Replaces all tasks on this device with the selected backup.",
+                        onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
+                    )
+                }
+            }
+
+            item { SettingsLabel("Local data") }
             item {
                 AdCard(padding = 4.dp) {
-                    SimpleSettingRow("Tasks", "In app memory")
+                    SimpleSettingRow("Tasks", "Stored on this device")
                     AdDivider()
                     SimpleSettingRow("Cloud API key", if (state.cloudConfig.keySaved) "Encrypted · Keystore" else "Not saved")
                     AdDivider()
@@ -605,5 +667,37 @@ private fun SimpleSettingRow(label: String, value: String) {
     ) {
         Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink, modifier = Modifier.weight(1f))
         Text(value, fontSize = 11.5.sp, color = Muted)
+    }
+}
+
+@Composable
+private fun ActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(29.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(Surface2),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp), tint = Ink)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+            Text(subtitle, fontSize = 10.sp, color = Muted, lineHeight = 14.sp)
+        }
     }
 }

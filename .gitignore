@@ -35,7 +35,10 @@ local.properties
 
 # Runtime data
 *.db
+*.db-wal
+*.db-shm
 *.log
+_*.xml
 
 # Mock server logs
 agentdeck-mock.log

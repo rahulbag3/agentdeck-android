@@ -60,6 +60,7 @@ internal object TaskCodec {
                 JSONArray().also { array -> plan.forEach { array.put(planStepToJson(it)) } }
             } ?: JSONObject.NULL)
             put("repoContext", task.repoContext?.let(::repoContextToJson) ?: JSONObject.NULL)
+            put("retryAttempts", task.retryAttempts)
         }.toString()
     )
 
@@ -88,7 +89,8 @@ internal object TaskCodec {
             repoContextRequested = payload.optBoolean("repoContextRequested", false),
             repoContext = payload.objectOrNull("repoContext")?.let(::repoContextFromJson),
             cloudModel = payload.optStringOrNull("cloudModel"),
-            activeRun = payload.optBoolean("activeRun", false)
+            activeRun = payload.optBoolean("activeRun", false),
+            retryAttempts = payload.optInt("retryAttempts", 0)
         )
     }
 
