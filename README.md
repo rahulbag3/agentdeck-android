@@ -120,15 +120,24 @@ second, and interrupted runs are reconciled on restore instead of staying stuck.
 
 ## Tests
 
-36 JVM unit tests cover:
+45 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
 - Cloud URL validation and endpoint construction
 - Provider turn building and retry history trimming
 - Cloud error classification, retryability, and backoff
+- Workspace backup format, validation, and skipped rows
 
-CI runs tests and assembles the debug APK on every push to `main`.
+An instrumentation smoke test (`AppSmokeTest`) launches the app on a device,
+waits for hydration, and navigates to Settings. Run it against one device:
+
+```bash
+ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest
+```
+
+CI runs unit tests and assembles the debug APK on every push to the default
+branch.
 
 ## Known limitations
 

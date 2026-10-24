@@ -218,6 +218,11 @@ The user explicitly kept in scope:
 - 45 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
   `CloudErrorHandlingTest` (11), `WorkspaceBackupTest` (9), and codec
   retry-attempt persistence.
+- `androidTest/AppSmokeTest` launches the app, waits for hydration, and opens
+  Settings. Verified green on the `agentdeck` AVD:
+  `ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest`.
+  Running without `ANDROID_SERIAL` also targets the physical phone, which fails
+  while its lock screen is up.
 - GitHub Actions (`.github/workflows/android.yml`) runs tests and assembles the
   debug APK on pushes and PRs that touch `android/`.
 
