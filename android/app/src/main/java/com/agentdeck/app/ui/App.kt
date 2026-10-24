@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,8 @@ import androidx.lifecycle.viewModelScope
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.RootTab
 import com.agentdeck.app.data.Screen
+import com.agentdeck.app.ui.theme.AmberInk
+import com.agentdeck.app.ui.theme.AmberSoft
 import com.agentdeck.app.ui.theme.Canvas
 import com.agentdeck.app.ui.theme.Ink
 import com.agentdeck.app.ui.theme.Muted
@@ -41,6 +44,11 @@ import com.agentdeck.app.ui.theme.Surface2
 
 class AgentDeckViewModel(application: Application) : AndroidViewModel(application) {
     val state = AgentDeckState(viewModelScope, application.applicationContext)
+
+    override fun onCleared() {
+        state.shutdown()
+        super.onCleared()
+    }
 }
 
 @Composable
@@ -109,6 +117,13 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
                                     RootTab.SETTINGS -> SettingsScreen(state)
                                 }
                             }
+                            if (!state.online) {
+                                OfflinePill(
+                                    modifier = Modifier
+                                        .align(Alignment.CenterHorizontally)
+                                        .padding(bottom = 8.dp)
+                                )
+                            }
                             AdBottomBar(active = currentScreen.tab, onSelect = state::selectRoot)
                         }
                     }
@@ -128,6 +143,29 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
 
     if (state.sheet != null) {
         AgentDeckSheetHost(state)
+    }
+}
+
+@Composable
+private fun OfflinePill(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .background(AmberSoft, shape = androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Offline",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = AmberInk
+        )
+        Text(
+            text = "· cloud requests will fail until you reconnect",
+            fontSize = 11.sp,
+            color = AmberInk,
+            modifier = Modifier.padding(start = 4.dp)
+        )
     }
 }
 

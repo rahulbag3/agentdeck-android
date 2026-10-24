@@ -27,9 +27,14 @@ class AgentDeckState(
     private val secureStore = SecureStore(context.applicationContext)
     private val config = AppConfig(context.applicationContext)
     private val store = TaskStore(context.applicationContext)
+    private val network = NetworkMonitor(context.applicationContext)
     private var lastPersisted: AgentDeckData? = null
 
     var data by mutableStateOf(SeedData.create())
+        private set
+
+    /** Mirrors device connectivity; drives the offline banner. */
+    var online by mutableStateOf(true)
         private set
 
     /** False until saved tasks have been restored, so the UI never flashes demo data. */
@@ -94,7 +99,21 @@ class AgentDeckState(
         data = attributeAgentMessages(data)
         reconcileDefaultModel()
         newTaskDraft = newTaskDraft.copy(useRepoContext = githubConfig.configured)
+        network.start { online = it }
+        online = network.isOnline
         restoreWorkspace()
+    }
+
+    /** Cancels every in-flight job and stops connectivity callbacks. */
+    fun shutdown() {
+        (hostJobs.values + localJobs.values + modelJobs.values + cloudJobs.values)
+            .forEach { it.cancel() }
+        hostJobs.clear()
+        localJobs.clear()
+        modelJobs.clear()
+        cloudJobs.clear()
+        repoCache.clear()
+        network.stop()
     }
 
     // ----- persistence -----
@@ -733,7 +752,12 @@ class AgentDeckState(
         cloudTest = ConnectionTest.Testing
         scope.launch {
             cloudTest = try {
-                ConnectionTest.Success(cloudClient.testConnection(baseUrl.trim(), key, modelName))
+                cloudClient.testConnection(baseUrl.trim(), key, modelName).fold(
+                    onSuccess = { ConnectionTest.Success(it) },
+                    onFailure = { error ->
+                        ConnectionTest.Failure(error.message ?: "The connection test failed.")
+                    }
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -1387,10 +1411,9 @@ class AgentDeckState(
             }
         }
 
-        var failure: String? = null
+        var failure: CloudOperationResult.Failure? = null
         var cancelled = false
-        var failureType: FailureType = FailureType.UNKNOWN
-        
+
         try {
             val result = cloudClient.streamChat(
                 baseUrl = cfg.baseUrl,
@@ -1402,18 +1425,22 @@ class AgentDeckState(
             ) { delta ->
                 synchronized(buffer) { buffer.append(delta) }
             }
-            
-            if (result.isFailure()) {
-                val cloudError = result.failureOrNull()?.cloudError ?: CloudError.InvalidResponse("Unknown error")
-                failureType = CloudOperationHandler.classifyAndHandle(cloudError).type
-                failure = cloudError.message
+
+            result.exceptionOrNull()?.let { error ->
+                val cloudError = when (error) {
+                    is CloudError -> error
+                    is CloudRequestException -> error.cloudError
+                    else -> CloudError.InvalidResponse(error.message ?: "The cloud request failed.")
+                }
+                failure = CloudOperationHandler.classifyAndHandle(cloudError)
             }
         } catch (error: CancellationException) {
             cancelled = true
             throw error
         } catch (error: Exception) {
-            failure = error.message ?: "The cloud request failed."
-            failureType = FailureType.UNKNOWN
+            failure = CloudOperationHandler.classifyAndHandle(
+                CloudError.InvalidResponse(error.message ?: "The cloud request failed.")
+            )
         } finally {
             done = true
             ticker.cancel()
@@ -1439,24 +1466,17 @@ class AgentDeckState(
                         }
                     }
                 }
-                if (failure != null) {
-                    val operationResult = CloudOperationHandler.classifyAndHandle(
-                        when (failureType) {
-                            FailureType.NETWORK -> CloudError.NetworkFailure
-                            FailureType.CONFIGURATION -> CloudError.AuthenticationError(failure)
-                            FailureType.RATE_LIMITED -> CloudError.RateLimitError()
-                            FailureType.TIMEOUT -> CloudError.TimeoutError(replyModel)
-                            FailureType.VALIDATION -> CloudError.ValidationFailed(failure)
-                            FailureType.SERVER_ERROR -> CloudError.HttpError(failure, 500)
-                            FailureType.NOT_FOUND -> CloudError.HttpError(failure, 404)
-                            else -> CloudError.InvalidResponse(failure)
-                        }
-                    )
-                    
+                val operationResult = failure
+                if (operationResult != null) {
                     updateTask(taskId) {
                         it.copy(
                             status = TaskStatus.NEEDS_INPUT,
                             activeRun = false,
+                            retryAttempts = if (operationResult.retryable) {
+                                it.retryAttempts + 1
+                            } else {
+                                it.retryAttempts
+                            },
                             messages = it.messages + Message(
                                 id = newMessageId(),
                                 role = MessageRole.SYSTEM,
@@ -1464,32 +1484,21 @@ class AgentDeckState(
                                 at = now
                             ),
                             activity = it.activity + ActivityEvent(
-                                "cloud-error", 
-                                operationResult.type.description(), 
+                                "cloud-error",
+                                operationResult.type.description(),
                                 now
                             ),
                             plan = failActivePlan(it.plan),
                             updatedAt = now
                         )
                     }
-                    toast("${operationResult.message.take(90)}")
-                    
-                    // If this is a recoverable error and we haven't tried yet, offer retry
-                    if (operationResult.retryable && operationResult.showRetry) {
-                        // Store the failure details for potential retry
-                        data = data.copy(tasks = data.tasks.map { t ->
-                            if (t.id == taskId && t.status == TaskStatus.FAILED) {
-                                t.copy(retryAttempts = t.retryAttempts + 1)
-                            } else {
-                                t
-                            }
-                        })
-                    }
+                    toast(operationResult.message.take(90))
                 } else if (text.isNotBlank()) {
                     updateTask(taskId) {
                         it.copy(
                             status = TaskStatus.NEEDS_INPUT,
                             activeRun = false,
+                            retryAttempts = 0,
                             activity = it.activity + ActivityEvent("cloud", "Analysis ready · nothing was changed", now),
                             plan = completePlan(it.plan),
                             updatedAt = now
