@@ -42,3 +42,6 @@ _*.xml
 
 # Mock server logs
 agentdeck-mock.log
+
+# Release artifacts built locally
+dist/
