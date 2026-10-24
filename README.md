@@ -6,10 +6,11 @@ with cloud analysis over your own API key, straight from the phone.
 
 <table>
   <tr>
-    <td><img src="preview-native/home.png" width="220" alt="Home" /></td>
-    <td><img src="preview-native/task-review.png" width="220" alt="Task review" /></td>
-    <td><img src="preview-native/diff.png" width="220" alt="Diff viewer" /></td>
-    <td><img src="preview-native/settings.png" width="220" alt="Settings" /></td>
+    <td><img src="preview-native/home.png" width="200" alt="Home" /></td>
+    <td><img src="preview-native/task-review.png" width="200" alt="Task review" /></td>
+    <td><img src="preview-native/diff.png" width="200" alt="Diff viewer" /></td>
+    <td><img src="preview-native/checks.png" width="200" alt="Checks" /></td>
+    <td><img src="preview-native/settings.png" width="200" alt="Settings" /></td>
   </tr>
 </table>
 
