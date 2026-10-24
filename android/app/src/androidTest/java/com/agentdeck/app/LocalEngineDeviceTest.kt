@@ -1,6 +1,9 @@
 package com.agentdeck.app
 
+import android.app.Activity
+import android.content.Intent
 import android.util.Log
+import android.view.WindowManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.agentdeck.app.data.LocalEngine
@@ -48,55 +51,81 @@ class LocalEngineDeviceTest {
         val path = requireNotNull(modelPath)
         val accelerator = arguments.getString("accelerator") ?: "auto"
 
-        val modelFile = java.io.File(path)
-        log("modelExists=${modelFile.exists()} canRead=${modelFile.canRead()} bytes=${modelFile.length()}")
-        val loadStart = System.nanoTime()
-        val handle = LocalEngine.nativeLoad(path, 4, 1024, accelerator)
-        val loadSeconds = (System.nanoTime() - loadStart) / 1_000_000_000.0
-        assertTrue("nativeLoad returned 0 for $path", handle != 0L)
-        val backend = LocalEngine.lastBackend()
-        log(
-            String.format(
-                Locale.US,
-                "accelerator=%s backend=%s load=%.2fs devices=%s",
-                accelerator, backend, loadSeconds, LocalEngine.devices().joinToString()
+        // A visible activity keeps the process out of the cached-app freezer,
+        // which otherwise suspends long accelerator loads mid-run.
+        val activity = startForegroundActivity()
+        try {
+            val modelFile = java.io.File(path)
+            log("modelExists=${modelFile.exists()} canRead=${modelFile.canRead()} bytes=${modelFile.length()}")
+            val loadStart = System.nanoTime()
+            val handle = LocalEngine.nativeLoad(path, 4, 1024, accelerator)
+            val loadSeconds = (System.nanoTime() - loadStart) / 1_000_000_000.0
+            assertTrue("nativeLoad returned 0 for $path", handle != 0L)
+            val backend = LocalEngine.lastBackend()
+            log(
+                String.format(
+                    Locale.US,
+                    "accelerator=%s backend=%s load=%.2fs devices=%s",
+                    accelerator, backend, loadSeconds, LocalEngine.devices().joinToString()
+                )
             )
-        )
 
-        val buffer = StringBuilder()
-        var tokens = 0
-        val generateStart = System.nanoTime()
-        val result = LocalEngine.nativeGenerate(
-            handle,
-            "You are a concise assistant.",
-            arrayOf("user"),
-            arrayOf("Write a short paragraph about the ocean."),
-            64,
-            0.7f,
-            0.9f,
-            object : LocalEngine.TokenCallback {
-                override fun onToken(text: String): Boolean {
-                    synchronized(buffer) { buffer.append(text) }
-                    tokens++
-                    return true
+            val buffer = StringBuilder()
+            var tokens = 0
+            val generateStart = System.nanoTime()
+            val result = LocalEngine.nativeGenerate(
+                handle,
+                "You are a concise assistant.",
+                arrayOf("user"),
+                arrayOf("Write a short paragraph about the ocean."),
+                64,
+                0.7f,
+                0.9f,
+                object : LocalEngine.TokenCallback {
+                    override fun onToken(text: String): Boolean {
+                        synchronized(buffer) { buffer.append(text) }
+                        tokens++
+                        return true
+                    }
                 }
+            )
+            val generateSeconds = (System.nanoTime() - generateStart) / 1_000_000_000.0
+            val text = synchronized(buffer) { buffer.toString() }
+            val tps = if (generateSeconds > 0) tokens / generateSeconds else 0.0
+            log(
+                String.format(
+                    Locale.US,
+                    "result=%d tokens=%d seconds=%.2f tps=%.2f text=%s",
+                    result, tokens, generateSeconds, tps, text.take(200).replace('\n', ' ')
+                )
+            )
+            LocalEngine.nativeFree(handle)
+
+            assertTrue("nativeGenerate failed with $result", result >= 0)
+            assertTrue("No tokens were produced", tokens > 0)
+        } finally {
+            activity?.finish()
+        }
+    }
+
+    private fun startForegroundActivity(): Activity? = runCatching {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(
+            Intent(Intent.ACTION_MAIN).apply {
+                setClassName(
+                    instrumentation.targetContext.packageName,
+                    "com.agentdeck.app.MainActivity"
+                )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         )
-        val generateSeconds = (System.nanoTime() - generateStart) / 1_000_000_000.0
-        val text = synchronized(buffer) { buffer.toString() }
-        val tps = if (generateSeconds > 0) tokens / generateSeconds else 0.0
-        log(
-            String.format(
-                Locale.US,
-                "result=%d tokens=%d seconds=%.2f tps=%.2f text=%s",
-                result, tokens, generateSeconds, tps, text.take(200).replace('\n', ' ')
-            )
-        )
-        LocalEngine.nativeFree(handle)
-
-        assertTrue("nativeGenerate failed with $result", result >= 0)
-        assertTrue("No tokens were produced", tokens > 0)
-    }
+        instrumentation.runOnMainSync {
+            activity.setShowWhenLocked(true)
+            activity.setTurnScreenOn(true)
+            activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        activity
+    }.onFailure { log("activityStartFailed=${it.message}") }.getOrNull()
 
     private companion object {
         const val TAG = "AgentDeckEngineTest"

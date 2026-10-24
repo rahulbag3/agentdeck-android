@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -50,6 +51,15 @@ void ensureBackend() {
         // DL builds (the standard CPU package) load the best CPU variant here.
         if (!g_backend_dir.empty()) {
             LOGI("Loading ggml backends from %s", g_backend_dir.c_str());
+            // FastRPC resolves HTP skels through these paths; without them the
+            // DSP fails to open a session with AEE_EUNABLETOLOAD (0x80000406).
+            const char * dspPaths[] = {
+                "ADSP_LIBRARY_PATH", "CDSP_LIBRARY_PATH", "CDSP1_LIBRARY_PATH",
+                "CDSP2_LIBRARY_PATH", "CDSP3_LIBRARY_PATH",
+            };
+            for (const char * name : dspPaths) {
+                setenv(name, g_backend_dir.c_str(), 1);
+            }
             ggml_backend_load_all_from_path(g_backend_dir.c_str());
         }
         llama_backend_init();
@@ -91,17 +101,20 @@ ggml_backend_dev_t pickDevice(const std::string & accelerator) {
     ensureBackend();
     ggml_backend_dev_t npu = nullptr;
     ggml_backend_dev_t gpu = nullptr;
+    ggml_backend_dev_t cpu = nullptr;
     const size_t count = ggml_backend_dev_count();
     for (size_t i = 0; i < count; i++) {
         ggml_backend_dev_t device = ggml_backend_dev_get(i);
         if (isNpu(device) && npu == nullptr) npu = device;
         if (isGpu(device) && gpu == nullptr) gpu = device;
+        if (isCpu(device) && cpu == nullptr) cpu = device;
     }
-    if (accelerator == "npu") return npu;
-    if (accelerator == "gpu") return gpu;
-    if (accelerator == "cpu") return nullptr;
+    if (accelerator == "npu") return npu != nullptr ? npu : cpu;
+    if (accelerator == "gpu") return gpu != nullptr ? gpu : cpu;
+    if (accelerator == "cpu") return cpu;
     if (npu != nullptr) return npu;
-    return gpu;
+    if (gpu != nullptr) return gpu;
+    return cpu;
 }
 
 std::string listDevices() {
@@ -116,12 +129,14 @@ std::string listDevices() {
     return out.empty() ? "CPU" : out;
 }
 
-llama_model * loadModel(const std::string & path, ggml_backend_dev_t device, int32_t gpuLayers) {
+llama_model * loadModel(const std::string & path, ggml_backend_dev_t device) {
     llama_model_params params = llama_model_default_params();
     ggml_backend_dev_t devices[2] = {device, nullptr};
     if (device != nullptr) {
+        // A single-device list also keeps context init from touching the NPU
+        // when the request only targets the CPU or GPU.
         params.devices = devices;
-        params.n_gpu_layers = gpuLayers;
+        params.n_gpu_layers = isCpu(device) ? 0 : 999;
     } else {
         params.devices = nullptr;
         params.n_gpu_layers = 0;
@@ -203,11 +218,13 @@ Java_com_agentdeck_app_data_LocalEngine_nativeLoad(
 
     auto * session = new Session();
     ggml_backend_dev_t device = pickDevice(requested);
-    session->model = loadModel(modelPath, device, 999);
-    if (session->model == nullptr && device != nullptr) {
+    bool accelerated = device != nullptr && !isCpu(device);
+    session->model = loadModel(modelPath, device);
+    if (session->model == nullptr && accelerated) {
         // The accelerator refused this model/quant; keep the task usable on CPU.
-        device = nullptr;
-        session->model = loadModel(modelPath, nullptr, 0);
+        accelerated = false;
+        device = pickDevice("cpu");
+        session->model = loadModel(modelPath, device);
     }
     if (session->model == nullptr) {
         LOGE("Failed to load model: %s", modelPath.c_str());
@@ -222,11 +239,12 @@ Java_com_agentdeck_app_data_LocalEngine_nativeLoad(
     ctxParams.n_threads = threads > 0 ? threads : 4;
     ctxParams.n_threads_batch = ctxParams.n_threads;
     session->ctx = llama_init_from_model(session->model, ctxParams);
-    if (session->ctx == nullptr && device != nullptr) {
+    if (session->ctx == nullptr && accelerated) {
         // Context creation can fail on a backend that loaded the weights.
         llama_model_free(session->model);
-        device = nullptr;
-        session->model = loadModel(modelPath, nullptr, 0);
+        accelerated = false;
+        device = pickDevice("cpu");
+        session->model = loadModel(modelPath, device);
         if (session->model != nullptr) {
             session->ctx = llama_init_from_model(session->model, ctxParams);
         }

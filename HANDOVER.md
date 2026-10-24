@@ -220,6 +220,15 @@ The user explicitly kept in scope:
   NPU/GPU/CPU from the user setting (Auto prefers NPU, then GPU), sets
   `n_gpu_layers = 999` for accelerators, and retries on CPU if the accelerator
   rejects the model or context.
+- Backend isolation and DSP discovery (added after iQOO 13 bring-up):
+  - Every load passes an explicit single-device list, including CPU. A CPU or
+    GPU request therefore never initializes HTP during context creation; before
+    this, an HTP session failure aborted otherwise-valid CPU runs.
+  - `ensureBackend()` sets `ADSP_LIBRARY_PATH`, `CDSP_LIBRARY_PATH`, and
+    `CDSP1..3_LIBRARY_PATH` to the native library dir before loading backends.
+    FastRPC resolves `libggml-htp-v79.so` through these paths; without them the
+    session fails with `AEE_EUNABLETOLOAD (0x80000406)`. This mirrors the
+    official `scripts/snapdragon/run.py` environment.
 - Settings → Acceleration: Auto / NPU · Hexagon / GPU · Adreno / CPU, with the
   detected backend list. Changing it requires reloading a model.
 - Packaging requirements discovered during integration:
@@ -248,12 +257,25 @@ The user explicitly kept in scope:
     but the native engine is unavailable because the 888's OpenCL 2.0 lacks
     `clCreateBufferWithProperties` and its HTP is older than v73. Expected; the
     Snapdragon APK targets newer chips.
-  - GPU/NPU verification is pending a modern Snapdragon (iQOO 13, HTP v79/81,
-    OpenCL 3.0). Testing needs that device connected; the x86_64 emulator cannot
-    exercise either backend.
+  - **Snapdragon APK on iQOO 13 (SM8750, Snapdragon 8 Elite, Android 16, HTP
+    v79, Adreno 830):** backends `GPUOpenCL, HTP0, CPU`. Llama 3.2 1B Instruct
+    Q4_0, 64-token generation, same debug build:
+    - NPU (`HTP0`): **56.3 / 59.0 tokens/s**, load 1.4–1.8 s, context reserve
+      193 ms, 17/17 layers offloaded, 267 MiB HTP compute buffer.
+    - Auto: `HTP0`, **61.0 tokens/s**, load 0.76 s.
+    - CPU: **41.7–45.0 tokens/s**, load 0.6–7.8 s.
+    - GPU (`GPUOpenCL`): **12–16 tokens/s**, load 4.2–5.8 s. Decode is slower
+      than CPU for this 1B Q4_0 model, so GPU remains an explicit choice; Auto
+      prefers the NPU. GPU prefill/larger-model behavior is not yet measured.
 - Test hook: `LocalEngineDeviceTest` (instrumentation) lists backends and runs a
-  generation with `-e modelPath ... -e accelerator ...`. On MIUI, `/data/local/tmp`
-  is readable by the app even when `run-as` is blocked.
+  generation with `-e modelPath ... -e accelerator ...`.
+  - The test launches `MainActivity` and sets keep-screen-on: on OriginOS the
+    cached-app freezer suspends the instrumentation process ~10 s after start,
+    even with a resumed activity, if the display is off. `cmd activity unfreeze
+    --sticky` is not sufficient. For manual runs use `svc power stayon true`.
+  - On MIUI, `/data/local/tmp` is readable by the app even when `run-as` is
+    blocked. On the iQOO, `run-as` works and the model was copied into
+    `files/test.gguf`.
 
 **Host bridge (real execution)**
 - `tools/agentdeck-host/server.mjs` is a zero-dependency Node 18+ host agent.

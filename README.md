@@ -141,8 +141,11 @@ Two APKs are available:
 - **Snapdragon** adds Adreno OpenCL and Hexagon NPU backends, selectable in
   Settings → Acceleration. It requires OpenCL 3.0 and HTP v73+; on older
   Snapdragon phones the native engine is unavailable (the rest of the app still
-  runs). Verified decode baseline on a Snapdragon 888 with the standard APK:
-  ~18 tokens/s for Llama 3.2 1B Q4_0.
+  runs). Verified decode on a Snapdragon 888 with the standard APK: ~18 tokens/s
+  for Llama 3.2 1B Q4_0. On an iQOO 13 (Snapdragon 8 Elite, HTP v79), 64-token
+  decode of the same model: **56–61 tokens/s on the NPU**, 42–45 on CPU, ~16 on
+  the Adreno GPU; Auto selects the NPU. The GPU is kept selectable but decode is
+  slower than CPU for this small 1B model.
 - Imported models are copied into app storage; none ship with the APK.
   Prefer Q4_K_M; 1–2B models need roughly 1–2 GB of RAM.
 - Native sets live in `android/app/src/standard/jniLibs` and
@@ -222,12 +225,22 @@ waits for hydration, and navigates to Settings. Run it against one device:
 ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-`LocalEngineDeviceTest` exercises the native engine and accelerators with a
-model readable by the app (e.g. pushed to `/data/local/tmp`):
+`LocalEngineDeviceTest` exercises the native engine and each accelerator. Push a
+GGUF, copy it into app storage, then run the test. It launches `MainActivity` and
+keeps the screen on so phone ROMs do not freeze the process mid-load:
 
 ```bash
-adb shell am instrument -w   -e class com.agentdeck.app.LocalEngineDeviceTest#generateOnRequestedBackend   -e modelPath /data/local/tmp/model.gguf -e accelerator cpu   com.agentdeck.app.test/androidx.test.runner.AndroidJUnitRunner
+adb push model.gguf /data/local/tmp/model.gguf
+adb shell run-as com.agentdeck.app cp /data/local/tmp/model.gguf files/test.gguf
+adb shell am instrument -w \
+  -e class com.agentdeck.app.LocalEngineDeviceTest#generateOnRequestedBackend \
+  -e modelPath /data/user/0/com.agentdeck.app/files/test.gguf \
+  -e accelerator npu   # npu, gpu, cpu, or auto
+  com.agentdeck.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
+
+On aggressive ROMs (OriginOS/MIUI) also keep the display awake for the run, e.g.
+`adb shell svc power stayon true`, and restore it afterwards.
 
 CI runs the JVM tests, the host tests, and assembles the debug APK on every push
 to the default branch.
