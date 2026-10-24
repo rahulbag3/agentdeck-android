@@ -482,20 +482,56 @@ The test mock server and this round's test app data were removed after verificat
 - Classification logic maps provider errors to action types
 
 **Modified CloudClient**:
-- [`streamChat()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt#L134-L165) now uses automatic retry loop (up to 3 attempts) and Result type
-- [`testConnection()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt#L346-L385) improved with socket timeout detection
+- [`streamChat()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt#L95-L165) now uses automatic retry loop (up to 3 attempts) and Result type
+- [`testConnection()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt#L385-L454) improved with socket timeout detection
 - Proper handling of cancellations vs errors (no exception on user-initiated stop)
 - Classification of provider-specific errors from JSON responses
 - Backed-off retry with jitter based on error type
 
 **Modified AgentDeckState**:
-- [`streamCloudReply()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/AgentDeckState.kt#L1328-L1481) updated to classify errors and provide actionable feedback
+- [`streamCloudReply()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/AgentDeckState.kt#L1428-L1581) updated to classify errors and provide actionable feedback
 - Better toast messages based on error classification:
   - Network failure → "Check your internet connection"
   - Auth error → "Check API key in Settings"
   - Rate limit → "Wait X seconds before trying again"
   - Timeout → "You can try again"
 - New `Task.retryAttempts` field added for persistent retry tracking
+
+### Crash reporting and Firebase integration (latest session)
+
+**Firebase infrastructure added**:
+- [build.gradle.kts](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/build.gradle.kts) with Firebase BOM v33.7.0, Crashlytics, and Analytics dependencies
+- [AgentDeckApplication](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/App.kt) class initializing Firebase on startup
+- [AndroidManifest.xml](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/AndroidManifest.xml) with Crashlytics collection metadata
+- [google-services.template.json](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/google-services.template.json) template for project setup
+
+**Logger utility** - [`Logger.kt`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/Logger.kt):
+- Centralized logging across the app with 5 levels (DEBUG, INFO, WARN, ERROR, FATAL)
+- Silent fail-safe design that never causes crashes itself
+- Custom key/value tracking for structured context (task IDs, operation types, parameters)
+- User identifier support for per-user issue analysis in Crashlytics
+- Integration with Firebase Crashlytics for automatic exception reporting
+
+**Enhanced CloudClient logging**:
+- Comprehensive error logging throughout HTTP requests ([streamChat()](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt), [testConnection()](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt))
+- Timeout event tracking with duration measurements
+- JSON parsing failure diagnostics with sample payloads
+- Provider error classification with detailed context mapping
+- Connection test result recording with success/failure metrics
+
+**Next steps for Firebase setup**:
+1. Create a Firebase project at https://console.firebase.google.com
+2. Add Android app with package name `com.agentdeck.app`
+3. Download `google-services.json` and place it at `android/app/google-services.json`
+4. Replace the template file content with actual values
+5. Rebuild and install APK to activate Crashlytics
+
+**Benefits**:
+- Real-time crash reporting with stack traces and device info
+- Structured error tracking with contextual keys for debugging
+- Production-ready monitoring infrastructure
+- Foundation for future analytics and usage tracking
+EOF
 
 **Benefits:**
 - Users receive clear, actionable error messages instead of generic failures
