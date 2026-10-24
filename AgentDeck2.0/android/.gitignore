@@ -20,3 +20,8 @@ externalNativeBuild/
 *.apk
 *.aab
 *.keystore
+
+# Release signing material — never commit
+*.jks
+keystore.properties
+google-services.json
