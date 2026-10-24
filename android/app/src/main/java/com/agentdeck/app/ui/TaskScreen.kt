@@ -948,10 +948,11 @@ private fun DecisionCard(task: Task) {
 
 @Composable
 private fun TaskHostBanner(state: AgentDeckState, task: Task, local: Boolean, cloud: Boolean = false) {
+    if (!state.hostConfig.configured) return
     if (cloud) {
         if (state.canReachHost()) return
         InfoBanner(
-            title = "Studio Mac is offline",
+            title = "${state.data.host.name} is offline",
             text = "Cloud analysis still works. File changes, checks, and approvals need the host.",
             kind = BannerKind.CLOUD,
             modifier = Modifier.padding(bottom = 12.dp),
@@ -973,7 +974,7 @@ private fun TaskHostBanner(state: AgentDeckState, task: Task, local: Boolean, cl
         "Host models and execution need a reconnect."
     }
     InfoBanner(
-        title = "Studio Mac is offline",
+        title = "${state.data.host.name} is offline",
         text = copy,
         kind = if (local) BannerKind.LOCAL else BannerKind.WARNING,
         modifier = Modifier.padding(bottom = 12.dp),

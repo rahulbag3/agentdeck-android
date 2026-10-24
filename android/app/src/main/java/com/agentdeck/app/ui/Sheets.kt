@@ -442,7 +442,18 @@ private fun DemoInfoSheet(state: AgentDeckState) {
     Spacer(Modifier.height(12.dp))
     DemoPoint(Icons.Outlined.Code, GreenSoft, GreenInk, "GitHub context", "Read-only snapshots of selected files. Public repos work without a token; private repos can use a read-only token stored on this phone.")
     Spacer(Modifier.height(12.dp))
-    DemoPoint(Icons.Outlined.Dns, BlueSoft, BlueInk, "Simulated host", "Studio Mac is simulated: no machine is contacted and no host code is executed. Host replies, diffs, and checks are generated locally.")
+    val hostLive = state.hostConfig.configured && state.data.host.connected
+    DemoPoint(
+        Icons.Outlined.Dns,
+        BlueSoft,
+        BlueInk,
+        if (hostLive) "Live host" else "Simulated host",
+        if (hostLive) {
+            "Tasks run your configured agent CLI on ${state.data.host.name}. Every run needs your approval, and output, diffs, and checks stream back."
+        } else {
+            "No host is connected, so host replies, diffs, and checks are generated locally. Connect the host agent in Settings for real execution."
+        }
+    )
     Spacer(Modifier.height(12.dp))
     DemoPoint(Icons.Outlined.PhoneAndroid, GreenSoft, GreenInk, "On-device preview", "Local model states and replies are simulated. An on-device inference engine is not bundled yet.")
     Spacer(Modifier.height(12.dp))
@@ -1146,7 +1157,7 @@ private fun ApproveSheet(state: AgentDeckState, taskId: String) {
     if (!online) {
         Spacer(Modifier.height(10.dp))
         InfoBanner(
-            title = "Studio Mac is offline",
+            title = "${state.data.host.name} is offline",
             text = "Reconnect before recording a decision.",
             kind = BannerKind.WARNING
         )
@@ -1229,7 +1240,7 @@ private fun RequestChangesSheet(state: AgentDeckState, taskId: String) {
     if (!online) {
         Spacer(Modifier.height(10.dp))
         InfoBanner(
-            title = "Studio Mac is offline",
+            title = "${state.data.host.name} is offline",
             text = "Reconnect before sending feedback.",
             kind = BannerKind.WARNING
         )
@@ -1261,7 +1272,7 @@ private fun RequestChangesSheet(state: AgentDeckState, taskId: String) {
 @Composable
 private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
     val title = when (kind) {
-        ConfirmKind.DISCONNECT -> "Disconnect Studio Mac?"
+        ConfirmKind.DISCONNECT -> "Disconnect ${state.data.host.name}?"
         ConfirmKind.RESET -> "Reset workspace?"
         ConfirmKind.REMOVE_CLOUD -> "Remove cloud API?"
         ConfirmKind.REMOVE_GITHUB -> "Remove GitHub connection?"

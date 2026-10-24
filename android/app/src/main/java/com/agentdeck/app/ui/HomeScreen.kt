@@ -84,10 +84,10 @@ fun HomeScreen(state: AgentDeckState) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (!state.data.host.connected) {
+            if (state.hostConfig.configured && !state.data.host.connected) {
                 item {
                     InfoBanner(
-                        title = "Studio Mac is offline",
+                        title = "${state.data.host.name} is offline",
                         text = "Cloud and local chat still work. Host models and execution need a reconnect.",
                         kind = BannerKind.WARNING,
                         action = {

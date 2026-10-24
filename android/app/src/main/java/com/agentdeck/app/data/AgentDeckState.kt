@@ -291,7 +291,7 @@ class AgentDeckState(
                 else -> "Local reply interrupted"
             }
             val detail = if (hostRun) {
-                "AgentDeck closed before Studio Mac finished this run. Any changes already present were not discarded. Review them or retry."
+                "AgentDeck closed before the host finished this run. Any changes already present were not discarded. Review them or retry."
             } else {
                 "AgentDeck closed before this reply finished. No files were changed. Send a message to continue."
             }
@@ -847,7 +847,7 @@ class AgentDeckState(
         hostConfig = HostConfig()
         hostTest = ConnectionTest.Idle
         val seedHost = SeedData.create().host
-        data = data.copy(host = seedHost.copy(connected = false, lastSeen = System.currentTimeMillis()))
+        data = data.copy(host = seedHost.copy(connected = true, lastSeen = System.currentTimeMillis()))
         sheet = null
         toast("Host removed · host execution is simulated")
     }
@@ -1131,7 +1131,7 @@ class AgentDeckState(
             return
         }
         if (selectedModel.isHost && !canReachHost()) {
-            draftError("Studio Mac is offline. Reconnect, then try again. Your draft is saved.", "offline")
+            draftError("${data.host.name} is offline. Reconnect, then try again. Your draft is saved.", "offline")
             return
         }
 
@@ -1168,7 +1168,7 @@ class AgentDeckState(
             }
             if (currentModel.isHost && !canReachHost()) {
                 creating = false
-                draftError("Studio Mac went offline. Your draft is saved. Reconnect and try again.", "offline")
+                draftError("${data.host.name} went offline. Your draft is saved. Reconnect and try again.", "offline")
                 return@launch
             }
 
@@ -1386,7 +1386,7 @@ class AgentDeckState(
             return
         }
         if (!isLocalTask(task) && !canReachHost()) {
-            toast("Reconnect Studio Mac before retrying")
+            toast("Reconnect ${data.host.name} before retrying")
             return
         }
         if (taskId in sending) return
@@ -1973,7 +1973,7 @@ class AgentDeckState(
     fun approveTask(taskId: String) {
         val task = task(taskId) ?: return
         if (!canReachHost()) {
-            toast("Studio Mac is offline. Reconnect before recording a decision.")
+            toast("${data.host.name} is offline. Reconnect before recording a decision.")
             return
         }
         if (task.status != TaskStatus.REVIEW) {
@@ -1997,7 +1997,7 @@ class AgentDeckState(
         val task = task(taskId) ?: return
         val note = feedback.trim()
         if (!canReachHost()) {
-            toast("Studio Mac is offline. Reconnect before sending feedback.")
+            toast("${data.host.name} is offline. Reconnect before sending feedback.")
             return
         }
         if (task.status != TaskStatus.REVIEW) {

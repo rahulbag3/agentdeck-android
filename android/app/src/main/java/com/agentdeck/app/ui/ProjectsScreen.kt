@@ -70,10 +70,10 @@ fun ProjectsScreen(state: AgentDeckState) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (!online) {
+            if (state.hostConfig.configured && !online) {
                 item {
                     InfoBanner(
-                        title = "Studio Mac is offline",
+                        title = "${state.data.host.name} is offline",
                         text = "Cloud and local chat still work. Host models and execution need a reconnect.",
                         action = {
                             AdButton("Reconnect", onClick = state::reconnectHost, kind = AdButtonKind.OUTLINE, small = true)
