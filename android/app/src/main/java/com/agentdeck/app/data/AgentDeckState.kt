@@ -1389,8 +1389,10 @@ class AgentDeckState(
 
         var failure: String? = null
         var cancelled = false
+        var failureType: FailureType = FailureType.UNKNOWN
+        
         try {
-            cloudClient.streamChat(
+            val result = cloudClient.streamChat(
                 baseUrl = cfg.baseUrl,
                 apiKey = apiKey,
                 model = cfg.model,
@@ -1400,11 +1402,18 @@ class AgentDeckState(
             ) { delta ->
                 synchronized(buffer) { buffer.append(delta) }
             }
+            
+            if (result.isFailure()) {
+                val cloudError = result.failureOrNull()?.cloudError ?: CloudError.InvalidResponse("Unknown error")
+                failureType = CloudOperationHandler.classifyAndHandle(cloudError).type
+                failure = cloudError.message
+            }
         } catch (error: CancellationException) {
             cancelled = true
             throw error
         } catch (error: Exception) {
             failure = error.message ?: "The cloud request failed."
+            failureType = FailureType.UNKNOWN
         } finally {
             done = true
             ticker.cancel()
@@ -1431,6 +1440,19 @@ class AgentDeckState(
                     }
                 }
                 if (failure != null) {
+                    val operationResult = CloudOperationHandler.classifyAndHandle(
+                        when (failureType) {
+                            FailureType.NETWORK -> CloudError.NetworkFailure
+                            FailureType.CONFIGURATION -> CloudError.AuthenticationError(failure)
+                            FailureType.RATE_LIMITED -> CloudError.RateLimitError()
+                            FailureType.TIMEOUT -> CloudError.TimeoutError(replyModel)
+                            FailureType.VALIDATION -> CloudError.ValidationFailed(failure)
+                            FailureType.SERVER_ERROR -> CloudError.HttpError(failure, 500)
+                            FailureType.NOT_FOUND -> CloudError.HttpError(failure, 404)
+                            else -> CloudError.InvalidResponse(failure)
+                        }
+                    )
+                    
                     updateTask(taskId) {
                         it.copy(
                             status = TaskStatus.NEEDS_INPUT,
@@ -1438,15 +1460,31 @@ class AgentDeckState(
                             messages = it.messages + Message(
                                 id = newMessageId(),
                                 role = MessageRole.SYSTEM,
-                                text = "$failure\nNothing was changed or run. Check the cloud settings and try again.",
+                                text = "${operationResult.message}\nNothing was changed or run.",
                                 at = now
                             ),
-                            activity = it.activity + ActivityEvent("cloud-error", "Cloud request failed", now),
+                            activity = it.activity + ActivityEvent(
+                                "cloud-error", 
+                                operationResult.type.description(), 
+                                now
+                            ),
                             plan = failActivePlan(it.plan),
                             updatedAt = now
                         )
                     }
-                    toast("Cloud request failed · ${failure.take(90)}")
+                    toast("${operationResult.message.take(90)}")
+                    
+                    // If this is a recoverable error and we haven't tried yet, offer retry
+                    if (operationResult.retryable && operationResult.showRetry) {
+                        // Store the failure details for potential retry
+                        data = data.copy(tasks = data.tasks.map { t ->
+                            if (t.id == taskId && t.status == TaskStatus.FAILED) {
+                                t.copy(retryAttempts = t.retryAttempts + 1)
+                            } else {
+                                t
+                            }
+                        })
+                    }
                 } else if (text.isNotBlank()) {
                     updateTask(taskId) {
                         it.copy(

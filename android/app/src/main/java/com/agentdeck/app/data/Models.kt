@@ -254,7 +254,9 @@ data class Task(
      * True only while a request started by this app is genuinely running.
      * Seeded snapshots can be IN_PROGRESS without ever having a live job.
      */
-    val activeRun: Boolean = false
+    val activeRun: Boolean = false,
+    /** Track retry attempts for robust error handling */
+    val retryAttempts: Int = 0
 )
 
 data class AgentDeckData(
