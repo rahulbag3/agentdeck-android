@@ -471,6 +471,39 @@ The test mock server and this round's test app data were removed after verificat
   - Retry remained available.
 - Reconnected, retried the host task, and confirmed it returned to `Review`; the failure card was cleared while the historical system notice remained in the transcript.
 
+### Error handling improvements (current session)
+
+**New architecture** - [`CloudErrorHandling.kt`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudErrorHandling.kt):
+- Sealed class `CloudError` with 7 subtypes: NetworkFailure, HttpError, AuthenticationError, RateLimitError, TimeoutError, InvalidResponse, ValidationFailed
+- Each error carries `isRetryable` flag and user-friendly message
+- Automatic retry with exponential backoff (1s → 2s → 4s → 10s max)
+- Result-based API replacing throw-based errors
+- Network connectivity monitoring via `NetworkMonitor` class
+- Classification logic maps provider errors to action types
+
+**Modified CloudClient**:
+- [`streamChat()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt#L134-L165) now uses automatic retry loop (up to 3 attempts) and Result type
+- [`testConnection()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/CloudClient.kt#L346-L385) improved with socket timeout detection
+- Proper handling of cancellations vs errors (no exception on user-initiated stop)
+- Classification of provider-specific errors from JSON responses
+- Backed-off retry with jitter based on error type
+
+**Modified AgentDeckState**:
+- [`streamCloudReply()`](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/AgentDeckState.kt#L1328-L1481) updated to classify errors and provide actionable feedback
+- Better toast messages based on error classification:
+  - Network failure → "Check your internet connection"
+  - Auth error → "Check API key in Settings"
+  - Rate limit → "Wait X seconds before trying again"
+  - Timeout → "You can try again"
+- New `Task.retryAttempts` field added for persistent retry tracking
+
+**Benefits:**
+- Users receive clear, actionable error messages instead of generic failures
+- Transient errors automatically recover without user intervention
+- App gracefully degrades when offline or rate-limited
+- Debugging easier with structured error types instead of raw exceptions
+- Recovery paths documented via `retryAttempts` field
+
 ### Markdown verification
 
 - Streamed a Markdown-heavy mock reply through the existing slow SSE mock.
