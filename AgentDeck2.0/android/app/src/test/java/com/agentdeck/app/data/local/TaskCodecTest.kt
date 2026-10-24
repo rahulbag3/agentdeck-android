@@ -169,4 +169,24 @@ class TaskCodecTest {
         assertEquals(settings, decoded)
         assertEquals(1, entity.id)
     }
+
+    @Test
+    fun `round trip preserves retry attempts`() {
+        val task = Task(
+            id = "t-retry",
+            title = "Retry",
+            prompt = "Retry the cloud request.",
+            projectId = "orbit-api",
+            branch = "main",
+            modelId = "cloud-byok",
+            status = TaskStatus.NEEDS_INPUT,
+            createdAt = 1,
+            updatedAt = 2,
+            retryAttempts = 2
+        )
+
+        val decoded = TaskCodec.fromEntity(TaskCodec.toEntity(task))
+
+        assertEquals(2, decoded?.retryAttempts)
+    }
 }

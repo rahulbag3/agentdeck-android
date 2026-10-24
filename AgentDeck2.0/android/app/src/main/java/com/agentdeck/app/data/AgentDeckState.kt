@@ -1991,6 +1991,50 @@ class AgentDeckState(
 
     fun consumeToast() { toastEvent = null }
 
+    /** Public toast hook for UI-owned async work (backup export/import). */
+    fun notifyUser(text: String) {
+        toast(text)
+    }
+
+    // ----- backup & restore -----
+
+    suspend fun exportBackupJson(): String = store.exportJson()
+
+    /**
+     * Replaces the workspace from a backup file. Returns null on success or a
+     * user-facing error message. Refuses while a request is in flight so jobs
+     * cannot write into a task that no longer exists.
+     */
+    suspend fun importBackup(text: String): String? {
+        if (cloudStreaming.isNotEmpty() || sending.isNotEmpty() ||
+            repoContextLoading.isNotEmpty() || localTyping.isNotEmpty()
+        ) {
+            return "Wait for active requests to finish, then import again."
+        }
+        return try {
+            val result = store.importJson(text)
+            val stored = store.load()
+            var restored = data.copy(
+                tasks = recoverInterruptedTasks(stored.tasks),
+                settings = stored.settings ?: data.settings
+            )
+            restored = validateSettings(restored)
+            restored = attributeAgentMessages(restored)
+            data = restored
+            reconcileDefaultModel()
+            lastPersisted = restored
+            screen = Screen.Root(RootTab.SETTINGS)
+            sheet = null
+            diffFileId = null
+            val skipped = if (result.skippedTasks > 0) " · ${result.skippedTasks} unreadable row(s) skipped" else ""
+            "Imported ${result.importedTasks} task${if (result.importedTasks == 1) "" else "s"}$skipped"
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            e.message ?: "The backup could not be imported."
+        }
+    }
+
     private fun toast(text: String) {
         toastId += 1
         toastEvent = ToastEvent(toastId, text)
