@@ -13,7 +13,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 data class CloudTurn(val role: String, val content: String)
@@ -81,16 +80,16 @@ class CloudRequestException : RuntimeException {
 }
 
 /**
- * Minimal OpenAI-compatible chat client. Requests go straight from the phone to the
- * endpoint the user configured; there is no relay. Keys are never logged.
- * 
- * Features:
- * - Structured error types with retry guidance
- * - Automatic retry on transient failures
- * - Comprehensive timeout handling
- * - Connection pooling and keep-alive
+ * Minimal OpenAI-compatible chat client with structured error handling, automatic retry,
+ * and comprehensive crash reporting via Firebase Crashlytics.
  */
 class CloudClient(private val client: OkHttpClient = defaultClient()) {
+    
+    init {
+        Logger.info("CloudClient initialized", mapOf(
+            "endpoint" to if (client.interceptors().isEmpty()) "default" else "custom"
+        ))
+    }
 
     suspend fun streamChat(
         baseUrl: String,
@@ -102,7 +101,13 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
         onDelta: (String) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val endpoint = endpointOrNull(baseUrl)
-            ?: return@withContext Result.failure(CloudError.InvalidResponse("The API base URL is not valid."))
+            ?: run {
+                Logger.error("Invalid API endpoint", null, mapOf(
+                    "baseUrl" to baseUrl,
+                    "attempt" to 0
+                ))
+                Result.failure(CloudError.InvalidResponse("The API base URL is not valid."))
+            }
 
         val messages = JSONArray()
         val systemContent = buildString {
@@ -267,6 +272,13 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
     private fun handleErrorResponse(code: Int, bodyText: String?): CloudError {
         val parsedError = parseProviderError(bodyText)
         
+        // Log errors with context for Crashlytics
+        Logger.error("handleErrorResponse", null, mapOf(
+            "httpCode" to code,
+            "parsedMessage" to (parsedError?.take(100) ?: "null"),
+            "bodyLength" to (bodyText?.length ?: 0)
+        ))
+        
         return when (code) {
             401, 403 -> {
                 val authMsg = parsedError ?: "Your API key was rejected. Please check the key, its permissions, and billing status."
@@ -343,10 +355,17 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
     private fun <T> Result<T>.orNull(): T? = getOrNull()
 
     /** Sends one tiny request so the user can verify URL, key, and model before using it. */
-    suspend fun testConnection(baseUrl: String, apiKey: String, model: String): String =
+    suspend fun testConnection(baseUrl: String, apiKey: String, model: String): Result<String> =
         withContext(Dispatchers.IO) {
             val endpoint = endpointOrNull(baseUrl)
-                ?: throw CloudRequestException("The API base URL is not valid.")
+                ?: run {
+                    Logger.error("testConnection failed", null, mapOf(
+                        "baseUrl" to baseUrl,
+                        "error" to "Invalid endpoint"
+                    ))
+                    Result.failure(CloudError.InvalidResponse("The API base URL is not valid."))
+                }
+            
             val payload = JSONObject()
                 .put("model", model)
                 .put("stream", false)
@@ -359,70 +378,100 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
                 .header("Accept", "application/json")
                 .post(payload.toString().toRequestBody(JSON))
                 .build()
-            val call = client.newCall(request)
-            val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+            
             try {
+                val call = client.newCall(request)
+                val responseTimeout = 15L
+                call.timeout().callTimeout(responseTimeout, TimeUnit.SECONDS)
+                
                 call.execute().use { response ->
                     val bodyText = response.peekBody(MAX_BODY_CHARS.toLong()).string()
-                    if (!response.isSuccessful) throw httpError(response.code, bodyText)
+                    
+                    if (!response.isSuccessful) {
+                        val cloudError = handleErrorResponse(response.code, bodyText)
+                        Logger.error("testConnection HTTP error", null, mapOf(
+                            "code" to response.code,
+                            "body" to bodyText.take(200),
+                            "cloudErrorType" to cloudError.javaClass.simpleName
+                        ))
+                        return@withContext Result.failure(cloudError)
+                    }
+                    
                     val json = runCatching { JSONObject(bodyText) }
-                        .getOrElse { throw CloudRequestException("The provider returned an unexpected response.") }
-                    json.optJSONObject("error")?.optString("message")
+                        .getOrElse { 
+                            Logger.error("testConnection JSON parse failed", null, mapOf(
+                                "bodySample" to bodyText.take(100)
+                            ))
+                            return@withContext Result.failure(CloudError.InvalidResponse("The provider returned an unexpected response."))
+                        }
+                    
+                    val errorObj = json.optJSONObject("error")
+                    errorObj?.optString("message")
                         ?.takeIf { it.isNotBlank() }
-                        ?.let { throw CloudRequestException(it.take(240)) }
+                        ?.let { 
+                            val classifiedError = classifyProviderError(it, errorObj.optInt("code"))
+                            Logger.error("testConnection provider error", classifiedError, mapOf(
+                                "providerMessage" to it.take(100)
+                            ))
+                            return@withContext Result.failure(classifiedError)
+                        }
+                    
                     val reply = json.optJSONArray("choices")
                         ?.optJSONObject(0)
                         ?.optJSONObject("message")
                         ?.optString("content")
                         ?.trim()
                         .orEmpty()
+                    
                     val reportedModel = json.optString("model").takeIf { it.isNotBlank() }
-                    when {
+                    
+                    val result = when {
                         reply.isNotBlank() -> "Connected · ${reportedModel ?: model}"
                         reportedModel != null -> "Connected · $reportedModel"
                         else -> "Connected · the endpoint answered"
                     }
+                    
+                    Logger.info("testConnection success", mapOf(
+                        "result" to result,
+                        "model" to (reportedModel ?: model)
+                    ))
+                    Result.success(result)
                 }
-            } catch (error: CloudRequestException) {
-                throw error
-            } catch (error: IOException) {
-                currentCoroutineContext().ensureActive()
-                throw CloudRequestException("Could not reach the API. Check the URL and your connection, then try again.")
-            } finally {
-                cancellation?.dispose()
+            } catch (e: java.net.SocketTimeoutException) {
+                Logger.error("testConnection timeout", e, mapOf(
+                    "timeoutMs" to 15000L,
+                    "baseUrl" to baseUrl
+                ))
+                Result.failure(CloudError.TimeoutError("connection test"))
+            } catch (e: Exception) {
+                Logger.error("testConnection exception", e, mapOf(
+                    "exceptionType" to e.javaClass.simpleName,
+                    "message" to (e.message?.take(200) ?: "unknown")
+                ))
+                Result.failure(e)
             }
         }
 
     private fun parseCompleteResponse(text: String): String {
-        val json = runCatching { JSONObject(text) }.getOrNull()
-            ?: throw CloudRequestException("The provider returned an unexpected response.")
-        json.optJSONObject("error")?.optString("message")
-            ?.takeIf { it.isNotBlank() }
-            ?.let { throw CloudRequestException(it.take(240)) }
-        return json.optJSONArray("choices")
-            ?.optJSONObject(0)
-            ?.optJSONObject("message")
-            ?.optString("content")
-            .orEmpty()
-    }
-
-    private fun httpError(code: Int, bodyText: String?): CloudRequestException {
-        val providerMessage = runCatching {
-            val obj = JSONObject(bodyText.orEmpty())
-            obj.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
-                ?: obj.optString("message").takeIf { it.isNotBlank() }
-        }.getOrNull()?.take(200)
-        val message = when (code) {
-            400 -> providerMessage ?: "The provider rejected the request. Check the model name and settings."
-            401, 403 -> "The API key was rejected. Check the key, its permissions, and billing status."
-            404 -> "Endpoint or model not found. Check the base URL and the model name."
-            408 -> "The provider timed out. Try again."
-            413 -> "The request was too large for this model. Try a task with less repository context."
-            429 -> "Rate limit or quota reached. Wait a moment or check the provider plan."
-            in 500..599 -> "The provider had a server error. Try again in a moment."
-            else -> providerMessage ?: "The provider rejected the request."
+        return try {
+            val json = JSONObject(text)
+            val errorObj = json.optJSONObject("error")
+            errorObj?.optString("message")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { throw classifyProviderError(it, errorObj.optInt("code")) }
+            
+            json.optJSONArray("choices")
+                ?.optJSONObject(0)
+                ?.optJSONObject("message")
+                ?.optString("content")
+                .orEmpty()
+        } catch (e: Exception) {
+            Logger.error("parseCompleteResponse failed", e, mapOf(
+                "textLength" to text.length,
+                "firstChar" to text.firstOrNull()
+            ))
+            ""
         }
-        return CloudRequestException("$message ($code)", code)
     }
 
     companion object {
