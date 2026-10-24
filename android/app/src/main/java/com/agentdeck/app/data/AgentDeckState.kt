@@ -2009,18 +2009,7 @@ class AgentDeckState(
             branch = "feature/new-task",
             useRepoContext = githubConfig.configured
         )
-        toast("Demo data reset · cloud and GitHub settings kept")
-    }
-
-    fun signOut() {
-        sheet = null
-        backStack.clear()
-        screen = Screen.SignedOut
-    }
-
-    fun signIn() {
-        screen = Screen.Root(RootTab.HOME)
-        toast("Signed in to the demo workspace")
+        toast("Workspace reset · cloud and GitHub settings kept")
     }
 
     fun openTaskForReview(taskId: String) {

@@ -510,12 +510,12 @@ fun SettingsScreen(state: AgentDeckState) {
                     ) {
                         Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(15.dp), tint = RedInk)
                         Spacer(Modifier.width(7.dp))
-                        Text("Reset demo data", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RedInk)
+                        Text("Reset workspace", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RedInk)
                     }
                 }
             }
 
-            item { SettingsLabel("Account") }
+            item { SettingsLabel("Profile") }
             item {
                 AdCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -530,15 +530,9 @@ fun SettingsScreen(state: AgentDeckState) {
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Rahul", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
-                            Text("demo@agentdeck.local · demo account", style = AdType.Tiny)
+                            Text("Local profile", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text("No account or sign-in · data stays on this device", style = AdType.Tiny)
                         }
-                        AdButton(
-                            "Sign out",
-                            onClick = { state.openConfirm(ConfirmKind.SIGN_OUT) },
-                            kind = AdButtonKind.OUTLINE,
-                            small = true
-                        )
                     }
                 }
             }
