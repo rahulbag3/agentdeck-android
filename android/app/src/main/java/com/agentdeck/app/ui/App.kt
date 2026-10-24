@@ -114,7 +114,7 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
     BackHandler(enabled = state.sheet == null && currentScreen is Screen.TaskScreen && state.diffFileId != null) {
         state.selectDiffFile(null)
     }
-    BackHandler(enabled = state.sheet == null && state.diffFileId == null && currentScreen !is Screen.SignedOut && state.canGoBack()) {
+    BackHandler(enabled = state.sheet == null && state.diffFileId == null && state.canGoBack()) {
         state.back()
     }
 
@@ -152,7 +152,6 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
                     }
                     is Screen.TaskScreen -> TaskScreen(state, currentScreen.taskId)
                     Screen.NewTask -> NewTaskScreen(state)
-                    Screen.SignedOut -> SignedOutScreen(state)
                 }
             }
         }
@@ -308,40 +307,6 @@ private fun OfflinePill(modifier: Modifier = Modifier) {
             fontSize = 11.sp,
             color = AmberInk,
             modifier = Modifier.padding(start = 4.dp)
-        )
-    }
-}
-
-@Composable
-private fun SignedOutScreen(state: AgentDeckState) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Surface2)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(28.dp),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("AgentDeck", style = MaterialTheme.typography.headlineLarge, color = Ink)
-        androidx.compose.foundation.layout.Spacer(Modifier.height(20.dp))
-        Text("You are signed out", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
-        androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
-        Text(
-            "This is a local demo. Signing back in only restores the sample workspace in app memory.",
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            color = Muted,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        androidx.compose.foundation.layout.Spacer(Modifier.height(20.dp))
-        AdButton(
-            "Continue in demo",
-            onClick = state::signIn,
-            modifier = Modifier.fillMaxWidth(),
-            fillWidth = true
         )
     }
 }

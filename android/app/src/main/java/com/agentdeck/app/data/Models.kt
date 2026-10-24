@@ -287,7 +287,6 @@ sealed interface Screen {
     data class Root(val tab: RootTab) : Screen
     data class TaskScreen(val taskId: String, val tab: TaskTab = TaskTab.CHAT) : Screen
     data object NewTask : Screen
-    data object SignedOut : Screen
 }
 
 sealed interface Sheet {
@@ -303,7 +302,7 @@ sealed interface Sheet {
     data class Confirm(val kind: ConfirmKind) : Sheet
 }
 
-enum class ConfirmKind { DISCONNECT, RESET, SIGN_OUT, REMOVE_CLOUD, REMOVE_GITHUB }
+enum class ConfirmKind { DISCONNECT, RESET, REMOVE_CLOUD, REMOVE_GITHUB }
 
 enum class StatusFilter(val label: String) {
     ALL("All"),

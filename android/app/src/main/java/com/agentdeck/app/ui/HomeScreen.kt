@@ -208,7 +208,7 @@ fun HomeScreen(state: AgentDeckState) {
 
             item {
                 Text(
-                    "Demo data · execution is simulated · local inference is a preview",
+                    "Local workspace · execution simulated · local inference is a preview",
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     fontSize = 9.5.sp,
@@ -240,10 +240,10 @@ private fun DemoNoticeCard(onDetails: () -> Unit, onDismiss: () -> Unit) {
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("Demo workspace", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Text("Local workspace", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "Tasks, agent messages, diffs, checks, and local previews are simulated on this device.",
+                    "Cloud analysis uses your API key. Execution, diffs, checks, and local previews are simulated on this device until a host is connected.",
                     style = AdType.Meta,
                     lineHeight = 15.sp
                 )
@@ -256,7 +256,7 @@ private fun DemoNoticeCard(onDetails: () -> Unit, onDismiss: () -> Unit) {
                     modifier = Modifier.clickable(onClick = onDetails)
                 )
             }
-            AdIconButton(Icons.Outlined.Close, "Dismiss demo notice", onDismiss, size = 30.dp)
+            AdIconButton(Icons.Outlined.Close, "Dismiss workspace notice", onDismiss, size = 30.dp)
         }
     }
 }

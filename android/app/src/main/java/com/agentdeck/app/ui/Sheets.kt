@@ -431,8 +431,8 @@ private fun ModelSheetRow(
 @Composable
 private fun DemoInfoSheet(state: AgentDeckState) {
     SheetHeader(
-        title = "About this demo",
-        subtitle = "AgentDeck native UI prototype · screen port",
+        title = "How this works",
+        subtitle = "What is real, and what is simulated",
         onClose = { state.showSheet(null) }
     )
     Spacer(Modifier.height(14.dp))
@@ -440,13 +440,13 @@ private fun DemoInfoSheet(state: AgentDeckState) {
     Spacer(Modifier.height(12.dp))
     DemoPoint(Icons.Outlined.Code, GreenSoft, GreenInk, "GitHub context", "Read-only snapshots of selected files. Public repos work without a token; private repos can use a read-only token stored on this phone.")
     Spacer(Modifier.height(12.dp))
-    DemoPoint(Icons.Outlined.Dns, BlueSoft, BlueInk, "Simulated host", "Studio Mac is not real. No machine is contacted and no host code is executed. Host messages, diffs, and checks are generated.")
+    DemoPoint(Icons.Outlined.Dns, BlueSoft, BlueInk, "Simulated host", "Studio Mac is simulated: no machine is contacted and no host code is executed. Host replies, diffs, and checks are generated locally.")
     Spacer(Modifier.height(12.dp))
-    DemoPoint(Icons.Outlined.PhoneAndroid, GreenSoft, GreenInk, "On-device preview", "Local model states and replies are simulated. The native engine will run GGUF models on the phone.")
+    DemoPoint(Icons.Outlined.PhoneAndroid, GreenSoft, GreenInk, "On-device preview", "Local model states and replies are simulated. An on-device inference engine is not bundled yet.")
     Spacer(Modifier.height(12.dp))
-    DemoPoint(Icons.Outlined.Shield, AmberSoft, AmberInk, "Approvals are local", "Approving records a decision in app memory. Nothing is merged, pushed, or deployed.")
+    DemoPoint(Icons.Outlined.Shield, AmberSoft, AmberInk, "Approvals are local", "Approving records a decision in the workspace on this phone. Nothing is merged, pushed, or deployed.")
     Spacer(Modifier.height(12.dp))
-    Text("Tasks are in memory. Cloud and GitHub settings persist on this phone.", style = AdType.Tiny)
+    Text("Tasks and settings are stored on this phone. Backups never include API keys or tokens.", style = AdType.Tiny)
     Spacer(Modifier.height(14.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         AdButton(
@@ -1147,26 +1147,22 @@ private fun RequestChangesSheet(state: AgentDeckState, taskId: String) {
 private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
     val title = when (kind) {
         ConfirmKind.DISCONNECT -> "Disconnect Studio Mac?"
-        ConfirmKind.RESET -> "Reset demo data?"
-        ConfirmKind.SIGN_OUT -> "Sign out?"
+        ConfirmKind.RESET -> "Reset workspace?"
         ConfirmKind.REMOVE_CLOUD -> "Remove cloud API?"
         ConfirmKind.REMOVE_GITHUB -> "Remove GitHub connection?"
     }
     val body = when (kind) {
-        ConfirmKind.DISCONNECT -> "Running host tasks will stop with a retryable error. Messages cannot be sent until you reconnect. This is a simulated host in the demo."
+        ConfirmKind.DISCONNECT -> "Running host tasks will stop with a retryable error. Messages cannot be sent until you reconnect. Execution is simulated on this device."
         ConfirmKind.RESET -> "This deletes every local task, message, change, check result, decision, and model state, then restores the sample workspace. It cannot be undone. Cloud and GitHub settings are kept."
-        ConfirmKind.SIGN_OUT -> "You will return to the demo sign-in screen. Local demo data stays in app memory."
         ConfirmKind.REMOVE_CLOUD -> "This deletes the saved API key and endpoint settings from this phone. Existing cloud tasks keep their messages but cannot continue until you connect a cloud API again."
         ConfirmKind.REMOVE_GITHUB -> "This deletes the saved repository settings and token. Existing tasks keep the context snapshot they already fetched."
     }
     val confirmLabel = when (kind) {
         ConfirmKind.DISCONNECT -> "Disconnect"
-        ConfirmKind.RESET -> "Reset demo data"
-        ConfirmKind.SIGN_OUT -> "Sign out"
+        ConfirmKind.RESET -> "Reset workspace"
         ConfirmKind.REMOVE_CLOUD -> "Remove cloud API"
         ConfirmKind.REMOVE_GITHUB -> "Remove GitHub"
     }
-    val danger = kind != ConfirmKind.SIGN_OUT
     SheetHeader(
         title = title,
         onClose = { state.showSheet(null) }
@@ -1187,13 +1183,12 @@ private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
                 when (kind) {
                     ConfirmKind.DISCONNECT -> state.disconnectHost()
                     ConfirmKind.RESET -> state.resetDemo()
-                    ConfirmKind.SIGN_OUT -> state.signOut()
                     ConfirmKind.REMOVE_CLOUD -> state.removeCloudConfig()
                     ConfirmKind.REMOVE_GITHUB -> state.removeGitHubConfig()
                 }
             },
             modifier = Modifier.weight(1f),
-            kind = if (danger) AdButtonKind.DANGER else AdButtonKind.PRIMARY
+            kind = AdButtonKind.DANGER
         )
     }
 }
