@@ -2,14 +2,15 @@ name: Android CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, agentdeck-root]
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
   pull_request:
-    branches: [main]
+    branches: [main, agentdeck-root]
     paths:
       - "android/**"
+  workflow_dispatch:
 
 jobs:
   build:
@@ -26,6 +27,8 @@ jobs:
           java-version: "21"
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
