@@ -417,7 +417,7 @@ fun PreviewTag(text: String = "Simulated") {
 @Composable
 fun DemoTag() {
     Text(
-        "DEMO",
+        "LOCAL",
         fontSize = 7.5.sp,
         fontWeight = FontWeight.ExtraBold,
         letterSpacing = 0.5.sp,
@@ -518,9 +518,9 @@ fun HomeTopBar(
                     .padding(horizontal = 9.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Outlined.Info, contentDescription = "About this demo", modifier = Modifier.size(12.dp), tint = Muted)
+                Icon(Icons.Outlined.Info, contentDescription = "About this workspace", modifier = Modifier.size(12.dp), tint = Muted)
                 Spacer(Modifier.width(4.dp))
-                Text("DEMO", fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = Muted, letterSpacing = 0.5.sp)
+                Text("LOCAL", fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = Muted, letterSpacing = 0.5.sp)
             }
             Box(
                 modifier = Modifier
