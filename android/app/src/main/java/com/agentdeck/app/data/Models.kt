@@ -1,6 +1,7 @@
 package com.agentdeck.app.data
 
 const val CLOUD_MODEL_ID = "cloud-byok"
+const val HOST_MODEL_ID = "host-agent"
 
 enum class TaskStatus(val label: String) {
     PENDING("Pending"),
@@ -12,6 +13,9 @@ enum class TaskStatus(val label: String) {
 }
 
 enum class ModelProvider { HOST, LOCAL, CLOUD }
+
+/** What the task does: general conversation vs. working a code workspace. */
+enum class TaskKind { CHAT, CODING }
 
 enum class LocalModelState(val label: String) {
     READY("Ready"),
@@ -64,9 +68,22 @@ data class CloudConfig(
     val model: String = "",
     val keySaved: Boolean = false
 ) {
+    /** Endpoint + key present; a model can still be chosen per message. */
+    val endpointReady: Boolean
+        get() = keySaved && CloudClient.baseUrlError(baseUrl) == null
     val configured: Boolean
-        get() = keySaved && model.isNotBlank() && CloudClient.baseUrlError(baseUrl) == null
+        get() = endpointReady && model.isNotBlank()
 }
+
+/** A saved OpenAI-compatible endpoint. The API key lives in SecureStore. */
+data class CloudProfile(
+    val id: String,
+    val label: String,
+    val baseUrl: String,
+    val models: List<String> = emptyList(),
+    val lastModel: String = "",
+    val keySaved: Boolean = false
+)
 
 data class GitHubConfig(
     val repo: String = "",
@@ -140,6 +157,7 @@ data class AppSettings(
     val activeProjectId: String,
     val defaultProjectId: String,
     val defaultModelId: String,
+    /** Legacy column kept for Room schema v1 and older backups; no longer read. */
     val demoNoticeDismissed: Boolean = false
 )
 
@@ -170,7 +188,7 @@ data class PermissionRequest(
     val body: String,
     val command: String,
     val pending: Boolean = true,
-    /** Host-assigned id for a live run; null for seeded/simulated requests. */
+    /** Host-assigned id for a live run; null outside a live run. */
     val requestId: String? = null
 )
 
@@ -261,6 +279,10 @@ data class Task(
     val failure: Failure? = null,
     val plan: List<PlanStep>? = null,
     val analysisOnly: Boolean = false,
+    /** Cloud task that acts on the project workspace with tools (files/shell/git). */
+    val agentMode: Boolean = false,
+    /** CHAT: general assistant with web/memory tools. CODING: workspace tools + git. */
+    val kind: TaskKind = TaskKind.CODING,
     val repoContextRequested: Boolean = false,
     val repoContext: RepoContext? = null,
     val cloudModel: String? = null,
@@ -290,10 +312,32 @@ data class NewTaskDraft(
     val modelId: String = "",
     val error: String? = null,
     val errorKind: String? = null,
-    val useRepoContext: Boolean = true
+    val useRepoContext: Boolean = true,
+    val agentMode: Boolean = false,
+    val taskKind: TaskKind = TaskKind.CODING,
+    /** Reusable instruction set applied to this task's system prompt. */
+    val instructionId: String = ""
 )
 
 enum class RootTab { HOME, TASKS, PROJECTS, SETTINGS }
+
+/**
+ * Provider classification that survives a missing model row — for example a
+ * local model whose file was deleted, or after the ephemeral local state
+ * reset. Falls back to transcript evidence so an orphaned task still behaves
+ * like its original provider (switchable, correct send path) instead of
+ * silently turning into a host task.
+ */
+fun taskLooksLocal(task: Task, option: ModelOption?): Boolean =
+    if (option != null) option.isLocal
+    else task.messages.any { it.provider == ModelProvider.LOCAL } ||
+        task.activity.any { it.type == "local" || it.type == "local-engine" }
+
+fun taskLooksCloud(task: Task, option: ModelOption?): Boolean =
+    if (option != null) option.isCloud
+    else task.analysisOnly ||
+        task.messages.any { it.provider == ModelProvider.CLOUD || it.cloud } ||
+        task.activity.any { it.type == "cloud" || it.type == "cloud-error" }
 
 enum class TaskTab(val label: String) { CHAT("Chat"), CHANGES("Changes"), CHECKS("Checks") }
 
@@ -306,8 +350,9 @@ sealed interface Screen {
 sealed interface Sheet {
     data object Projects : Sheet
     data object Models : Sheet
-    data object DemoInfo : Sheet
+    data object About : Sheet
     data object CloudSetup : Sheet
+    data object Instructions : Sheet
     data object GitHubSetup : Sheet
     data object HostSetup : Sheet
     data class RepoContextSheet(val taskId: String) : Sheet

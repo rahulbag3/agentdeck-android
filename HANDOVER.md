@@ -1,6 +1,6 @@
 # AgentDeck — engineering handover
 
-**Date:** 2026-10-24  
+**Date:** 2026-10-25 (updated: on-device agent harness)  
 **Workspace:** `C:\Users\Rahul\Downloads\qoder\AgentDeck2.0`  
 **Primary target:** Android-only native Kotlin/Jetpack Compose rebuild  
 **Current build:** `android/app/build/outputs/apk/release/app-release.apk` (signed, R8, v1.0.0)  
@@ -60,10 +60,11 @@ The user explicitly kept in scope:
   - New Task
   - Task Chat / Changes / Checks
   - Diff viewer
-  - Sheets for projects, models, approvals, requests, confirmations, demo info
-- Local-model UI states and simulated on-device replies.
-- Host connection/offline states. Execution is real when the bundled host agent
-  is connected and the run is approved; otherwise it is simulated and labelled.
+  - Sheets for projects, models, approvals, requests, confirmations, about info
+- Local-model UI states and real on-device replies through llama.cpp.
+- Host connection/offline states. Execution runs only when the bundled host
+  agent is connected and the run is approved; without a host, host tasks fail
+  with an actionable error.
 - Cloud BYOK:
   - Settings card and setup sheet.
   - OpenAI-compatible `/chat/completions` client.
@@ -95,8 +96,8 @@ The user explicitly kept in scope:
 - ViewModel survives rotation.
 - Room-backed workspace persistence:
   - Tasks, ordered messages, activity, changed files/diffs, checks, decisions, plans, permission/failure state, repository snapshots, and per-task cloud model overrides.
-  - Workspace settings (active project, default project, default model, demo-notice state).
-  - A hydration gate prevents demo data from flashing before saved tasks load.
+  - Workspace settings (active project, default project, default model).
+  - A hydration gate prevents placeholder data from flashing before saved tasks load.
   - Interrupted live runs are reconciled on restore instead of staying stuck in progress.
 - In-flight cloud control:
   - The composer swaps Send for Stop while a cloud reply streams.
@@ -117,10 +118,12 @@ The user explicitly kept in scope:
 
 ### Still simulated
 
-- Host execution, diffs, checks, approvals, and host agent replies.
-- Local/on-device inference and local model loading/importing.
-- The local model does **not** use the GitHub connector yet.
-- The web prototype's runtime behavior remains a prototype.
+Nothing. As of the demo removal (2026-10-24, below) every reply, diff, check,
+and approval in the app comes from a real source: the configured cloud
+endpoint, the bundled llama.cpp runtime, or the connected host agent. The web
+prototype in `app/` remains a non-runtime UX reference.
+
+Known gap: local models still do not read the GitHub snapshot (cloud-only).
 
 ### Still missing
 
@@ -295,7 +298,8 @@ The user explicitly kept in scope:
 - Android: `data/HostClient.kt` (SSE + permission/cancel/ping), `data/HostDiff.kt`
   (unified diff → DiffLine), host fields in `AppConfig`/`SecureStore`
   (`host.token`), and `AgentDeckState.startLiveHostRun`/`handleHostEvent`.
-  With no host configured, host tasks stay simulated and are labelled as such.
+  With no host configured, host tasks fail with an actionable error
+  ("Connect an execution host in Settings…").
 - Settings → Execution host: setup sheet with URL, token, insecure-LAN toggle,
   test, save & connect, reconnect, and remove. The host card shows live/offline
   state; `Live host` appears on tasks that produced real host events.
@@ -306,12 +310,13 @@ The user explicitly kept in scope:
 - Host protocol tests: 9 (`node --test tools/agentdeck-host/server.test.mjs`).
 
 **Product copy**
-- Demo framing is gone: the header chip reads `LOCAL`, the home notice is
-  "Local workspace" with an explicit statement that cloud analysis is real and
-  execution/diffs/checks are simulated, and the info sheet is "How this works".
+- Demo framing is gone: the header chip reads `LOCAL` and the info sheet is
+  "How this works" ("Where your work runs"). After the demo removal below, no
+  copy anywhere claims simulation.
 - The placeholder account/sign-out flow was removed; Settings shows a local
   profile with no account.
-- Reset is "Reset workspace"; the footer shows the real package version.
+- Reset is "Reset workspace" (clears to an empty workspace); the footer shows
+  the real package version.
 
 **Tests**
 - 63 JVM tests pass (`./gradlew :app:testDebugUnitTest`), including
@@ -330,6 +335,227 @@ The user explicitly kept in scope:
 **Repository docs**
 - `README.md` covers features, privacy properties, build/release steps,
   architecture, test inventory, and known limitations.
+
+**Two-mode launcher + Termux bridge + llama b11876 (2026-10-25, late)**
+- **Simplified interface**: Home now opens with two launcher cards — Chat and
+  Coding — each jumping straight into New Task with that mode preselected.
+  The bottom bar is Home / **Chats** / **Coding** / Settings: the old Tasks
+  tab shows only chat conversations, the old Projects tab shows coding tasks
+  for the active project (project management moved to the existing project
+  sheet from Home). No projects exist by default, so Coding needs a project
+  first (creation form lives in the project sheet).
+- **llama.cpp updated b11851 → b11876**: both native sets re-fetched from
+  official release packages (now `.tar.gz` assets) via
+  `tools/fetch-llama-android.sh` (default tag bumped). Standard runtime-
+  dispatch CPU variants and Snapdragon CPU/OpenCL/HTP skels v73–v85 all
+  replaced; the Hexagon updates are inside the skels (skel list unchanged).
+  Not yet regenerated: emulator x86_64 libs (tools/build-llama-x86_64.sh).
+- **Termux bridge (real toolchains on-device)**: `data/SshRunner.kt` executes
+  commands in Termux's sshd over 127.0.0.1:8022 (JSch). Setup lives in
+  Settings → Device shell: enable, port, Termux `whoami` user, password
+  (Keystore). The `run` tool routes automatically: toybox-allowed commands
+  stay in the in-app shell; anything else (node, python, gradle…) goes to
+  Termux **when the bridge is enabled and ready**, otherwise the allowlist
+  error explains the limit. The workspace moved to
+  `/storage/emulated/0/Android/media/com.agentdeck.app/workspace` so Termux
+  (with storage permission) and AgentDeck share the same real files;
+  falls back to app-private storage if the media dir is not writable. The
+  coding system prompt tells the model which shell applies. One-time Termux
+  setup: `pkg install openssh`, `passwd`, `sshd`, `termux-setup-storage`.
+  Not yet device-verified: the full SSH round-trip (phone locked during the
+  session); the Test button in Settings checks it (`echo … && uname -o`).
+  Device-verified 2026-10-25: Test passed ("works · Android"), and the bridge
+  was then used for real toolchains. Two live issues found and fixed on the
+  device: (1) the Termux username must be exactly `whoami` output
+  (`u0_a705` — a missing underscore fails auth); (2) the default Termux
+  mirror host (185.224.83.107) was unreachable from the user's ISP — every
+  pkg mirror "bad" while ping/DNS/google.com worked. Fix: point
+  `$PREFIX/etc/apt/sources.list` at the Cloudflare-backed
+  `packages.termux.dev` mirror, then `pkg install -y nodejs python`
+  (node v26.12.1, python 3.14.8, npm, clang, make verified).
+
+**Dual-mode harness: Chat + Coding (2026-10-25)**
+- New Task presents two mode cards. **Chat** = general assistant with real
+  tools; **Coding** = the workspace agent (unchanged). Kind persists on the
+  task (`Task.kind`, codec-aware) and chat tasks are visible in every project
+  list (global).
+- **Chat tools** (auto-run): `web_search` (DuckDuckGo HTML endpoint — a scrape,
+  not a contract; errors honestly if markup changes), `web_fetch` (any URL →
+  extracted text; HTML/JSON/plain aware, size-capped), `memory_save` /
+  `memory_recall`; **`http`** (GET/POST/PUT/DELETE, approval-gated with the
+  exact URL + body shown). Coding mode keeps workspace/git/shell tools and
+  gains web_fetch/web_search/memory for docs lookups.
+- **Backends**: the tool loop now runs on cloud (streamed) OR on-device
+  (llama.cpp, blocking per step, full reply appended). Chat + local models get
+  the same tool loop; coding + local keeps the plain chat path (tool quality
+  on 4B models is poor — revisit deliberately).
+- **Memory** (`data/AgentStores.kt` MemoryStore): JSON on app storage, 60
+  entries cap, term recall with recent-fallback, top-10 snapshot injected into
+  both system prompts. **Instructions** (InstructionStore): named reusable
+  prompt sets, curated in Settings → Agent intelligence → "Manage instructions
+  & memory" (add/delete, memory viewer + clear), selectable per task in the
+  New Task sheet; injected as `[User instructions for this task]`.
+- Chat tasks show a single Chat tab (no Changes/Checks); their runs end at
+  needs-input (no git finalize). Errors still route into the loop for
+  self-recovery; failure cards unchanged.
+- Tests: 95 JVM unit tests (added: MemoryStore, HTML text extraction, DDG
+  parse, prompt builder per mode).
+- Honest limits: web_search scrapes DDG (may break — it reports instead of
+  faking); http calls send data off-device and are always approved first;
+  memory is plaintext JSON (user-inspectable); no file attachments in chat
+  yet (next step); local models are not streamed in the loop (blocking per
+  step).
+
+**On-device agent harness (2026-10-25)** — the core host-independent execution path:
+- **Workspace** (`data/Workspace.kt`): real files under
+  `files/workspace/<projectId>/`. Path confinement (`Workspace.confine`, pure
+  + unit-tested) rejects `..`, backslashes, colons, and anything canonicalizing
+  outside the root. `importFromGitHub` downloads the codeload zip and extracts
+  it (entry/size/total caps); `list/read/write/grep/clear/stats` with size
+  caps and binary detection.
+- **Shell** (`data/ShellRunner.kt`): `/system/bin/sh -c` with an allowlist of
+  toybox utilities (su/am/pm/cmd/settings/dd/mount/reboot blocked), 20 s
+  timeout, 20 kB output cap. Commands require user approval.
+- **Git** (`data/WorkspaceGit.kt`): JGit 5.13.5 (pure Java; R8 needs
+  `-dontwarn javax.management.**` / `java.lang.management.**`). init, status,
+  commitAll, diffHead (cached diff incl. untracked, `diff --git` format),
+  log. All local; publishing stays on the GitHub PR flow.
+- **Tool protocol** (`data/AgentTools.kt`): the model emits
+  ` ```agentdeck-tool <name> key="value" ` fenced blocks (list / read / write /
+  run / grep / git). `ToolParser` reuses FenceScanner; `ToolExecutor` runs
+  them against the real workspace/shell/git; `needsApproval` = write/run/commit;
+  `UnifiedDiffFiles` splits JGit diffs into ChangedFiles for the Changes tab.
+- **Agent loop** (`AgentDeckState.runAgentLoop`): cloud task with
+  `agentMode = true` routes to the loop instead of plain streaming — reply →
+  parse tools → execute (reads automatic; writes/commands raise the existing
+  permission card via `CompletableDeferred`, 120 s timeout = decline) →
+  results fed back as the next user turn — up to 8 steps, then finalize:
+  git diff → Changes tab → REVIEW, or NEEDS_INPUT with no changes. Errors feed
+  back to the model for self-recovery; loop failure → retryable Failure.
+- **UI**: New Task has a "Run as agent" toggle (cloud models only); Settings
+  has an "Agent workspace" card (import from GitHub / clear / stats);
+  Projects gained a **New project** creation form (creation UI never existed —
+  seed data used to provide projects); agent tasks show a dedicated banner and
+  tool notes as system messages (⚙ label → output first line).
+- Tests: 91 JVM unit tests (added: ToolParser parse/approval/results,
+  Workspace path confinement, UnifiedDiffFiles splitting).
+- Honest limits: stock Android has no Node/Python/Gradle toolchains — the
+  system prompt says so and steers verification to CI/inspection; shell is
+  toybox-only. Local models are not wired to the agent loop yet.
+- Untested on device end-to-end (phone auto-locked during the session):
+  the full import → agent task → approval → diff flow. All pieces are unit
+  tested and compile; first live run is the next action.
+
+**Cloud profiles + local model lifecycle (2026-10-25)**- Multiple cloud APIs: `CloudProfile` (id, label, baseUrl, saved model ids,
+  last-used model) persisted in `AppConfig.cloudProfilesJson`; each API key
+  lives in SecureStore under `cloud.key.<id>`. The pre-profiles single config
+  migrates into a profile automatically on first launch (key moved, legacy
+  `cloud.api-key` cleared). `cloudConfig` is now a derived view of the active
+  profile.
+- Settings → Cloud APIs: list with Use/Models/Edit/Remove, an add/edit editor,
+  and a per-profile model manager — "Fetch from API" (`GET /models`,
+  `CloudClient.listModels`) lists endpoint models for tap-to-save; saved ids
+  can be removed. Using a model id in a conversation saves it automatically.
+- Conversation model sheet is compact: saved cloud models as one-tap rows, a
+  small manual id field, and local models that load on selection. Only one
+  local model stays in memory — loading a model unloads every other loaded or
+  loading model (models with active generation are skipped); switching to an
+  unloaded model inside a conversation loads it automatically.
+- Fixes after device testing (2026-10-25, all verified on the iQOO 13 against
+  the user's live OpenRouter profile):
+  - **Local-generation crash**: `nativeGenerate` passed each token piece to
+    Kotlin with `NewStringUTF`; a multi-byte UTF-8 character split across
+    tokens produced an invalid fragment and the JNI checker aborted the
+    process (`SIGABRT`, "input is not valid Modified UTF-8"). The JNI layer
+    now decodes pieces to UTF-16 itself (`NewString` with surrogate pairs),
+    carries incomplete trailing bytes to the next token, and maps invalid
+    sequences to U+FFFD. Verified: two full generations on the bilingual
+    Spark model with zero crash signals.
+  - The "No reply / returned no text" notice now includes the engine result
+    code (-1 load/encode, -2 decode, -3 stopped) to separate model silence
+    from engine failure.
+  - **Mid-reply stops / "no reply" in long conversations**: the KV cache was
+    never cleared between generations, so the second message in a
+    conversation appended onto a full 2048-token cache and decode failed
+    ("failed to find a memory slot", engine code -2). `nativeGenerate` now
+    calls `llama_memory_clear` at the start of every generation (each call
+    re-prefills the whole prompt anyway). Context raised 2048 → 4096,
+    max tokens 384 → 512, and local conversations use a dedicated turn
+    budget (`buildLocalTurns`: last 8 turns, 1.2k chars each, 8k total)
+    instead of the cloud-sized one. Oversized prompts now keep the
+    template/system head (256 tokens) plus the recent tail — the old
+    tail-only truncation cut the chat template apart and produced silence.
+    Verified: two consecutive generations with zero memory-slot warnings.
+    Note: OriginOS freezes the app when the screen dims mid-generation and
+    the reply then never completes — that is the device freezer, not the
+    engine; test with the screen on.
+  - `listModels` built `/chat/completions/models` because it appended to the
+    chat endpoint; it now builds `{base}/models`, and reads the body with an
+    8 MB cap (OpenRouter's list is ~2 MB; the 200 KB chat cap truncated it to
+    an unparseable "0 models").
+  - The send path (`startCloudAnalysis`, `startCloudReply`, task creation,
+    connection test) still read the legacy `cloud.api-key`, which profile
+    migration clears — every send failed with "Cloud API key missing" and
+    flipped `keySaved` off. All reads now go through
+    `activeCloudApiKey()` (profile key with legacy fallback).
+  - Tapping the task's *current* unloaded local model was a no-op; it now
+    loads it (same-model check runs before the ready check).
+  - `CloudConfig.endpointReady` (endpoint + key, no model required) now gates
+    the conversation cloud section and `switchTaskToCloud`; previously
+    removing your only saved model blanked the default model and hid the
+    manual field behind a "Connect a cloud API" dead end.
+
+**Host-independent execution via GitHub (2026-10-24)**
+- The host agent is now strictly optional. The standalone execution path is
+  GitHub-native and runs entirely from the phone:
+  - The cloud system prompt instructs the model to emit each proposed file as
+    an `agentdeck-file path="…"` fenced block containing the complete new file
+    content (`data/Proposal.kt` parses these; last-write-wins per path).
+  - **Changes tab → Apply** commits every proposed file to a new
+    `agentdeck/<slug>-<taskId>` branch (Contents API), opens a pull request,
+    and moves the task to review with real diffs (old content comes from the
+    task's repo snapshot when present; otherwise the file is shown as added).
+  - The Checks tab fetches the repository's CI check runs for the applied
+    branch (`/commits/{ref}/check-runs`) and keeps polling (~20 s, up to ~7
+    minutes) while any run is queued or in progress. A manual Refresh action
+    exists on applied tasks.
+  - Writes require the user's fine-grained token (Contents + Pull requests:
+    Read and write) and an explicit Apply tap. The model can never trigger a
+    write, and nothing pushes to the default branch.
+  - Re-applying after further chat updates the same branch and reuses the open
+    pull request.
+- `GitHubClient` grew a write path: `branchHeadSha`, `ensureBranch` (422 =
+    reuse existing), `putFile` (create/update via sha), `createPullRequest`
+    (422 = return the open PR), `checkRuns`. Reads still work without a token.
+- The built-in host model row now appears only while a host is configured
+    (added on connect, removed with the host config); `defaultModelId()`
+    prefers cloud. All host references in copy are labelled optional.
+- Host bridge code and protocol are unchanged and still work end to end.
+
+**Demo removal (2026-10-24)**
+- The seeded demo workspace is gone. `SeedData.kt` was deleted; the app starts
+  from `AgentDeckState.emptyWorkspace()` (no projects, no tasks, cloud + host
+  model rows, imported GGUF models re-attached from the registry).
+- Simulated host runs are gone (`startSimulatedHostRun`, `demoFiles`,
+  `demoChecks`, `fileFromLines`, `buildDiff` deleted). A host task without a
+  reachable host fails fast with an actionable error.
+- Simulated local replies are gone (`localReply()` and the fake 1.6 s typing
+  path deleted, `localTyping` state removed). Sending to a local model without
+  a loaded engine posts a "Local model not loaded" system notice instead.
+- The fake 1.3 s model-load path is gone; only imported GGUF models can load,
+  through the real llama.cpp engine.
+- A built-in `HOST_MODEL_ID` ("Host agent") model row keeps host execution
+  reachable from the New Task sheet now that seed host models no longer exist.
+- The home demo-notice card was removed; the top-bar info pill opens the
+  "How this works" sheet (`Sheet.About`). `Sheet.DemoInfo`, `openDemoInfo`,
+  `dismissDemoNotice`, `DemoTag`, `PreviewTag` were removed/renamed
+  (`HostTag`, `PlaceholderTag` with explicit text).
+- `AppSettings.demoNoticeDismissed` and the matching Room column/backup key
+  stay for schema v1 and older-backup compatibility; nothing reads it anymore.
+- "Clear workspace" (`clearWorkspace()`, renamed from `resetDemo()`) keeps
+  imported local models in the picker along with the cloud and host rows.
+- The web prototype in `app/` and the visual bundles remain untouched as
+  non-runtime references.
 
 ---
 
@@ -352,22 +578,21 @@ The user explicitly kept in scope:
 
 - [Models.kt](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/Models.kt)
   - Tasks, messages, models, providers, plans, changes, checks, sheets, repo context.
-- [SeedData.kt](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/SeedData.kt)
-  - Demo workspace, host, projects, models, and tasks.
 - [AgentDeckState.kt](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/data/AgentDeckState.kt)
-  - Central Compose state, navigation, task creation, messaging, model switching, cloud analysis, GitHub context, and simulated host behavior.
+  - Central Compose state, navigation, task creation, messaging, model switching, cloud analysis, GitHub context, live host runs, and the llama.cpp engine bridge.
 
 Key state concepts:
 
 - `ModelProvider`: `HOST`, `LOCAL`, `CLOUD`.
-- `CLOUD_MODEL_ID`: a single dynamic cloud row appended to the seeded models.
+- `CLOUD_MODEL_ID`: a single dynamic cloud row; `HOST_MODEL_ID` is the built-in
+  host-agent row. Imported GGUF models are appended from the registry.
 - `Task.cloudModel`: per-conversation cloud model override.
 - `Message.modelName` and `Message.provider`: per-reply attribution.
 - `Task.repoContext`: read-only GitHub snapshot attached to a task.
 - `Task.analysisOnly`: true when the current mode is cloud analysis.
 - `isTaskBusy(taskId)`: guards sending and model switching during cloud/local/context work.
 - `repoCache`: in-memory 10-minute GitHub context cache.
-- `Task.activeRun`: true only while a request started by this app is live. Seeded demo snapshots can be `IN_PROGRESS` without an active run and are intentionally left alone on restore.
+- `Task.activeRun`: true only while a request started by this app is live; restore reconciles exactly those runs.
 
 ### Persistence
 
@@ -387,7 +612,7 @@ Key state concepts:
   - The UI shows a small restore screen until `hydrated` is true.
   - `startPersistenceLoop()` saves when the snapshot differs from the last saved state (about once per second).
   - `recoverInterruptedTasks()` finds `IN_PROGRESS` tasks with `activeRun = true`, marks in-flight messages failed, and converts host runs to retryable `FAILED` or cloud runs to `NEEDS_INPUT` with an explicit system notice.
-  - `resetDemo()` clears and reseeds the database.
+  - `clearWorkspace()` clears the database to an empty workspace (cloud/GitHub settings and imported models are kept).
 - Room stores task content and repository snapshots, not API keys/tokens. Secrets remain in Android Keystore. App backup is disabled so the Room DB is not copied off-device by Auto Backup.
 - Any future entity change needs a Room migration; version 1 has no migration history yet.
 
@@ -438,9 +663,9 @@ Important UI behavior:
 - Cloud tasks show `Cloud` and `ANALYSIS ONLY` tags.
 - Cloud replies show the model and a `Cloud` chip and render Markdown; user, system, host, and local messages stay plain.
 - Markdown fenced code scrolls horizontally inside the bubble; it is never wrapped or executed.
-- Local replies show the model, `On this phone`, and `Simulated`.
+- Local replies show the model and `On this phone`.
 - Host replies show the model without a cloud/local chip.
-- The activity card shows `Cloud`, `Mixed`, or `Simulated` based on actual history.
+- The activity card shows `Cloud`, `On device`, `Live host`, `Mixed`, or `History` based on actual history.
 - The task composer's model row contains the `Change` affordance.
 - The task model sheet is in [Sheets.kt](file:///C:/Users/Rahul/Downloads/qoder/AgentDeck2.0/android/app/src/main/java/com/agentdeck/app/ui/Sheets.kt) as `TaskModelsSheet`.
 - The app column is capped at 430 dp on wide screens.
@@ -452,31 +677,35 @@ Important UI behavior:
 Preserve these unless the user explicitly changes direction.
 
 1. **Cloud inference is not execution.**
-   - Cloud tasks can analyze, plan, and propose patches.
+   - Cloud tasks can analyze, plan, and propose files (`agentdeck-file` blocks).
    - They must never claim to write files, run commands, run tests, merge, or deploy.
-2. **Execution is host-gated.**
-   - File changes, checks, and approvals are associated with the execution host.
-   - A connected host agent performs real work; without one, host execution is
-     simulated and must stay labelled as simulated.
-3. **Local inference is still simulated.**
-   - Do not present local replies as real model output.
-4. **No gateway for personal BYOK.**
+2. **Writes are user-triggered and pull-request-shaped.**
+   - Applying a proposal requires the user's explicit Apply tap plus a write
+     token, and only ever creates a branch and pull request — never a direct
+     push to the default branch.
+3. **Host execution is optional and host-gated.**
+   - The optional host agent performs real work on the user's computer only
+     after per-run approval; without one, nothing about the app is blocked.
+4. **Local inference is real and on-device.**
+   - Local replies come only from the bundled llama.cpp runtime on an imported
+     GGUF model. If no engine is loaded, say so — never fabricate a reply.
+5. **No gateway for personal BYOK.**
    - Requests go directly from the phone to the endpoint entered by the user.
-5. **Never store a key in source or the APK.**
+6. **Never store a key in source or the APK.**
    - Runtime BYOK only.
    - The current debug APK contains no API key or GitHub token.
-6. **Secrets are Keystore-encrypted.**
+7. **Secrets are Keystore-encrypted.**
    - SharedPreferences contain ciphertext only.
    - API-key and token fields use password IME behavior.
-7. **GitHub token is never sent to the cloud model.**
+8. **GitHub token is never sent to the cloud model.**
    - Only repository content selected for the task is sent to the configured cloud endpoint.
-8. **Repository content is untrusted data.**
+9. **Repository content is untrusted data.**
    - The cloud system prompt tells the model not to treat repository text as instructions.
-9. **Do not log prompts, responses, keys, or tokens.**
-10. **Remote endpoints require HTTPS.**
+10. **Do not log prompts, responses, keys, or tokens.**
+11. **Remote endpoints require HTTPS.**
     - Cleartext is allowed only for `10.0.2.2`, `localhost`, and `127.0.0.1` for local testing.
-11. **Do not introduce a WebView wrapper.**
-12. **Do not infer that "keep it as is" means a hybrid architecture.** Confirm native versus wrapper when ambiguous.
+12. **Do not introduce a WebView wrapper.**
+13. **Do not infer that "keep it as is" means a hybrid architecture.** Confirm native versus wrapper when ambiguous.
 
 ---
 
@@ -624,7 +853,7 @@ adb shell run-as com.agentdeck.app cat shared_prefs/agentdeck.secrets.xml
 6. Switch to a ready local model.
 7. Send a message.
 8. Confirm:
-   - A local simulated reply appears.
+   - A local reply streams from the loaded GGUF model (load one first; an unloaded model shows a "not loaded" notice instead).
    - No cloud request is made.
    - The header switches from `Cloud / ANALYSIS ONLY` to `Local`.
    - Activity shows `Mixed` after the conversation has both cloud and local history.
@@ -913,7 +1142,7 @@ Do not make a task switch mutate the global Settings model.
 - `cloud`
 - `localPreview`
 
-Seed messages are attributed during state initialization. New local, cloud, and host agent messages must set these fields. Do not label an old message using the task's current model.
+Unattributed messages are backfilled during state initialization. New local, cloud, and host agent messages must set these fields. Do not label an old message using the task's current model.
 
 ### Busy guard
 
@@ -956,7 +1185,7 @@ Use it before sending or switching models so a new action cannot cancel an in-fl
 
 The task is retryable after reconnecting. `retryTask()` clears the old failure before starting a new host run. `reconnectHost()` does not auto-resume anything; execution requires an explicit user retry.
 
-The simulated host's `connected` flag is runtime state and is not persisted; a cold start assumes the demo host is connected again. Tasks and failures still persist.
+The host's `connected` flag is runtime state and is not persisted; a cold start begins disconnected and a background ping reconnects automatically when a host is configured. Tasks and failures still persist.
 
 ### Markdown replies
 
@@ -968,7 +1197,7 @@ The simulated host's `connected` flag is runtime state and is not persisted; a c
 - Escaped punctuation is supported.
 - Underscores inside words are not treated as italics, so identifiers like `snake_case` survive.
 
-Integration is cloud-only in `MessageBlock`: user, system, host, and local messages remain plain `Text`. This keeps simulated-host/local copy predictable and limits untrusted model formatting to the provider that produces Markdown in practice.
+Integration is cloud-only in `MessageBlock`: user, system, host, and local messages remain plain `Text`. This keeps host/local copy predictable and limits untrusted model formatting to the provider that produces Markdown in practice.
 
 Safety choices:
 
@@ -1028,7 +1257,7 @@ Implemented and verified. Persisted data:
 - Tasks and ordered messages.
 - Activity events.
 - Changed files/diffs, checks, decisions, plans, permission/failure state, and repository snapshots.
-- Workspace settings (active/default project, default model, demo notice).
+- Workspace settings (active/default project, default model).
 - Per-task cloud model override.
 
 Design decisions:
@@ -1036,7 +1265,7 @@ Design decisions:
 - One `tasks` row per task: scalar columns are queryable; nested lists live in an ordered JSON payload. This keeps schema version 1 small and lets additive fields decode safely.
 - The whole workspace is saved as one transaction when its snapshot changes (about once per second). This is simple and crash-consistent at the app's scale.
 - API keys and GitHub tokens stay in Keystore; no secrets enter Room.
-- `Task.activeRun` distinguishes a live request from a seeded `IN_PROGRESS` snapshot. On restore, only active runs are reconciled.
+- `Task.activeRun` distinguishes a live request from a persisted snapshot. On restore, only active runs are reconciled.
 - Auto Backup is disabled. Room schema v1 is exported under `app/schemas/`.
 
 Remaining follow-ups:
@@ -1071,7 +1300,7 @@ The agreed future path is llama.cpp JNI plus GGUF import.
 
 After the engine exists:
 
-- Replace simulated local replies.
+- Replace simulated local replies. — completed; llama.cpp generation streams on-device
 - Add real token/latency/memory state.
 - Wire the same GitHub context into local inference.
 - Keep execution separate from inference.
@@ -1110,9 +1339,14 @@ Cloud stop and one-tap retry are implemented. Remaining:
 
 ## 11. Known rough edges
 
-- Host tasks do not generate simulated replies for follow-up messages.
+- Host tasks do not reply to follow-up messages during or after a run.
+- Applies carry full new file contents (no partial-diff application); deleting a
+  file is not supported by the block format yet.
+- Apply diffs compare against the task's context snapshot; files the model
+  changes outside the snapshot always display as added.
+- CI polling stops after roughly 7 minutes; use Refresh on the Checks tab after
+  that.
 - Host tasks cannot switch to cloud/local mid-conversation by design in the current slice.
-- Local inference is still simulated.
 - Local inference does not read GitHub context.
 - Only one global cloud endpoint/key.
 - GitHub context selection is heuristic and may miss the ideal file set.
@@ -1122,8 +1356,8 @@ Cloud stop and one-tap retry are implemented. Remaining:
 - Markdown is parsed on every streaming update; very long replies have not been benchmarked yet.
 - Only the most recent cloud error is retryable. Any later activity (for example a model switch) hides the retry strip, though the failure notice remains in the transcript.
 - Cloud retry regenerates from the last user turn; it does not resume a partial reply. The old partial stays visible and can duplicate content in the new answer.
-- Stop is available only for cloud streaming. Simulated host runs cannot be stopped manually except by disconnecting the host.
-- Host connection state is runtime-only in the demo; a cold start assumes the host is connected again even if it was disconnected before the restart.
+- Stop is available for cloud streaming, on-device generation, and live host runs (cancel).
+- Host connection state is runtime-only; a cold start begins disconnected and reconnects in the background when a host is configured.
 - Workspace snapshots are written about once per second; an abrupt process kill can lose up to roughly the last second of streamed text. Completed state transitions are normally captured within that window.
 - Room schema v1 has no migration history yet; future entity changes require explicit migrations.
 - Task content and repository snapshots live in app-private Room storage, not Keystore-encrypted storage. Auto Backup is disabled and secrets remain in Keystore.

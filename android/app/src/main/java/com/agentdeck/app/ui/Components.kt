@@ -400,7 +400,7 @@ fun AnalysisTag() {
 }
 
 @Composable
-fun PreviewTag(text: String = "Simulated") {
+fun PlaceholderTag(text: String) {
     Text(
         text.uppercase(),
         fontSize = 7.sp,
@@ -415,9 +415,9 @@ fun PreviewTag(text: String = "Simulated") {
 }
 
 @Composable
-fun DemoTag() {
+fun HostTag() {
     Text(
-        "LOCAL",
+        "HOST",
         fontSize = 7.5.sp,
         fontWeight = FontWeight.ExtraBold,
         letterSpacing = 0.5.sp,
@@ -493,7 +493,7 @@ fun RootTopBar(
 
 @Composable
 fun HomeTopBar(
-    onDemo: () -> Unit,
+    onAbout: () -> Unit,
     onSettings: () -> Unit
 ) {
     Row(
@@ -514,7 +514,7 @@ fun HomeTopBar(
                 modifier = Modifier
                     .clip(PillShape)
                     .border(1.dp, Line, PillShape)
-                    .clickable(onClick = onDemo)
+                    .clickable(onClick = onAbout)
                     .padding(horizontal = 9.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -885,8 +885,8 @@ fun AdStatTile(
 fun AdBottomBar(active: RootTab, onSelect: (RootTab) -> Unit) {
     val tabs = listOf(
         Triple(RootTab.HOME, "Home", Icons.Outlined.Home),
-        Triple(RootTab.TASKS, "Tasks", Icons.Outlined.Description),
-        Triple(RootTab.PROJECTS, "Projects", Icons.Outlined.GridView),
+        Triple(RootTab.TASKS, "Chats", Icons.Outlined.ChatBubbleOutline),
+        Triple(RootTab.PROJECTS, "Coding", Icons.Outlined.Terminal),
         Triple(RootTab.SETTINGS, "Settings", Icons.Outlined.Settings)
     )
     Column(Modifier.fillMaxWidth().background(AdSurface)) {

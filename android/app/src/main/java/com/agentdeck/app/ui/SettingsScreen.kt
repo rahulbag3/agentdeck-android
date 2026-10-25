@@ -25,6 +25,8 @@ import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Lock
@@ -62,6 +64,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.launch
 import com.agentdeck.app.data.AgentDeckState
+import com.agentdeck.app.data.Sheet
 import com.agentdeck.app.data.ConfirmKind
 import com.agentdeck.app.data.LocalEngine
 import com.agentdeck.app.data.LocalModelState
@@ -132,7 +135,7 @@ fun SettingsScreen(state: AgentDeckState) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item { SettingsLabel("Execution host") }
+            item { SettingsLabel("Execution host · optional") }
             item {
                 val live = state.hostConfig.configured
                 AdCard {
@@ -156,7 +159,7 @@ fun SettingsScreen(state: AgentDeckState) {
                             )
                             Text(
                                 if (live) "${host.platform} · ${host.transport}"
-                                else "Tasks stay simulated until you connect",
+                                else "Host tasks need a connection",
                                 style = AdType.Tiny
                             )
                         }
@@ -181,7 +184,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     Spacer(Modifier.height(10.dp))
                     Text(
                         when {
-                            !live -> "Connect the AgentDeck host agent to run tasks, collect diffs, and execute checks on your computer. Without a host, those steps are simulated."
+                            !live -> "Connect the AgentDeck host agent to run tasks, collect diffs, and execute checks on your computer."
                             online -> "Live host · last seen ${relativeTime(host.lastSeen)}. Tasks run your configured agent CLI on the host."
                             else -> "Host tasks are stopped and can be retried. On-device chat remains available."
                         },
@@ -219,9 +222,188 @@ fun SettingsScreen(state: AgentDeckState) {
                 }
             }
 
+            item { SettingsLabel("Agent workspace") }
+            item {
+                val stats = state.workspaceStatsFor(state.data.settings.activeProjectId)
+                val hasFiles = stats.first > 0
+                AdCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Surface2),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(19.dp), tint = Ink)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (state.data.settings.activeProjectId.isBlank()) "No project selected" else state.activeProject.name + " workspace",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink
+                            )
+                            Text(
+                                if (hasFiles) {
+                                    "${stats.first} files · ${"%.1f".format(stats.second / 1_000_000.0)} MB · real git inside"
+                                } else {
+                                    "Files the agent reads and edits on this phone"
+                                },
+                                style = AdType.Tiny
+                            )
+                        }
+                        AdTag(
+                            if (hasFiles) "Ready" else "Empty",
+                            if (hasFiles) GreenSoft else GraySoft,
+                            if (hasFiles) GreenInk else GrayInk
+                        )
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    Text(
+                        "Agent tasks work directly in this folder: reading, editing, shell commands, and git — with your approval for every write. Import your repository from GitHub to start.",
+                        fontSize = 10.sp,
+                        lineHeight = 15.sp,
+                        color = Muted
+                    )
+                    Spacer(Modifier.height(11.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AdButton(
+                            if (state.workspaceImporting) "Importing…" else "Import from GitHub",
+                            onClick = state::importWorkspaceFromGitHub,
+                            kind = if (hasFiles) AdButtonKind.OUTLINE else AdButtonKind.PRIMARY,
+                            small = true,
+                            enabled = !state.workspaceImporting
+                        )
+                        if (hasFiles) {
+                            AdButton(
+                                "Clear",
+                                onClick = state::clearWorkspaceForActiveProject,
+                                kind = AdButtonKind.DANGER,
+                                small = true
+                            )
+                        }
+                    }
+                }
+            }
+
+            item { SettingsLabel("Agent intelligence") }
+            item {
+                val memories = state.memoryCount()
+                AdCard {
+                    SimpleSettingRow("Memory", "$memories fact${if (memories == 1) "" else "s"} the agent remembers")
+                    AdDivider()
+                    SimpleSettingRow("Instructions", "${state.instructions.all().size} reusable prompt sets")
+                    AdDivider()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { state.showSheet(Sheet.Instructions) }
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(14.dp), tint = BlueInk)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Manage instructions & memory", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BlueInk)
+                    }
+                }
+            }
+
+            item { SettingsLabel("Device shell · Termux") }
+            item {
+                var enabled by remember { mutableStateOf(state.sshConfig.enabled) }
+                var port by remember { mutableStateOf(state.sshConfig.port.toString()) }
+                var user by remember { mutableStateOf(state.sshConfig.user) }
+                var password by remember { mutableStateOf("") }
+                AdCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Surface2),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Outlined.Terminal, contentDescription = null, modifier = Modifier.size(19.dp), tint = Ink)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Termux bridge", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
+                            Text(
+                                if (state.sshConfig.ready) "Ready · real Node/Python/Gradle on-device"
+                                else "Run real toolchains via Termux's sshd",
+                                style = AdType.Tiny
+                            )
+                        }
+                        Switch(checked = enabled, onCheckedChange = { enabled = it })
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    Text(
+                        "One-time: install Termux, run `pkg install openssh`, `passwd`, then `sshd`, and give Termux storage permission. AgentDeck runs approved commands on 127.0.0.1 and shares the workspace through Android/media.",
+                        fontSize = 10.sp,
+                        lineHeight = 15.sp,
+                        color = Muted
+                    )
+                    if (enabled) {
+                        Spacer(Modifier.height(9.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AdTextField(
+                                value = port,
+                                onValueChange = { port = it.filter { ch -> ch.isDigit() } },
+                                placeholder = "Port (8022)",
+                                modifier = Modifier.weight(1f),
+                                minHeight = 40.dp,
+                                mono = true,
+                                singleLine = true
+                            )
+                            AdTextField(
+                                value = user,
+                                onValueChange = { user = it },
+                                placeholder = "User (whoami)",
+                                modifier = Modifier.weight(1f),
+                                minHeight = 40.dp,
+                                mono = true,
+                                singleLine = true
+                            )
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        AdTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            placeholder = if (state.sshConfig.password.isNotBlank()) "Saved · enter to replace" else "Password (from passwd)",
+                            minHeight = 40.dp,
+                            mono = true,
+                            singleLine = true
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AdButton(
+                                "Save",
+                                onClick = {
+                                    state.saveSshConfig(enabled, port.toIntOrNull() ?: 8022, user, password)
+                                    password = ""
+                                },
+                                kind = AdButtonKind.PRIMARY,
+                                small = true
+                            )
+                            AdButton(
+                                if (state.sshTesting) "Testing…" else "Test",
+                                onClick = state::testSsh,
+                                kind = AdButtonKind.OUTLINE,
+                                small = true,
+                                enabled = !state.sshTesting && state.sshConfig.ready
+                            )
+                        }
+                    }
+                }
+            }
+
             item { SettingsLabel("Cloud models") }
             item {
                 val cloud = state.cloudConfig
+                val profile = state.activeCloudProfile()
                 AdCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -235,12 +417,12 @@ fun SettingsScreen(state: AgentDeckState) {
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Cloud API", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
+                            Text("Cloud APIs", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
                             Text(
-                                if (cloud.configured) {
-                                    "${cloud.model} · ${com.agentdeck.app.data.CloudClient.providerLabel(cloud.baseUrl)}"
+                                if (profile != null && cloud.configured) {
+                                    "${profile.label} · ${profile.models.size} model${if (profile.models.size == 1) "" else "s"} · ${state.cloudProfiles.size} API${if (state.cloudProfiles.size == 1) "" else "s"}"
                                 } else {
-                                    "OpenAI-compatible · bring your own key"
+                                    "Multiple OpenAI-compatible endpoints · bring your own keys"
                                 },
                                 style = AdType.Tiny,
                                 maxLines = 1,
@@ -248,14 +430,14 @@ fun SettingsScreen(state: AgentDeckState) {
                             )
                         }
                         AdTag(
-                            if (cloud.configured) "Configured" else "Not set",
+                            if (cloud.configured) "Active" else "Not set",
                             if (cloud.configured) VioletSoft else GraySoft,
                             if (cloud.configured) VioletInk else GrayInk
                         )
                     }
                     Spacer(Modifier.height(9.dp))
                     Text(
-                        "Replies come directly from the endpoint you configure. Useful without a host for code review, diagnosis, planning, and patch proposals.",
+                        "Replies come directly from the endpoint you use. Add several APIs, fetch their model lists, and pick models per conversation.",
                         fontSize = 10.sp,
                         lineHeight = 15.sp,
                         color = Muted
@@ -264,13 +446,13 @@ fun SettingsScreen(state: AgentDeckState) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(11.dp), tint = Muted2)
                         Spacer(Modifier.width(4.dp))
-                        Text("Analysis only · nothing is written or run", style = AdType.Tiny)
+                        Text("Keys encrypted on this device", style = AdType.Tiny)
                     }
                     Spacer(Modifier.height(11.dp))
                     AdButton(
-                        if (cloud.configured) "Manage cloud API" else "Set up cloud API",
+                        if (state.cloudProfiles.isNotEmpty()) "Manage cloud APIs" else "Add cloud API",
                         onClick = state::openCloudSetup,
-                        kind = if (cloud.configured) AdButtonKind.OUTLINE else AdButtonKind.PRIMARY,
+                        kind = if (state.cloudProfiles.isNotEmpty()) AdButtonKind.OUTLINE else AdButtonKind.PRIMARY,
                         small = true
                     )
                 }
@@ -292,7 +474,7 @@ fun SettingsScreen(state: AgentDeckState) {
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("GitHub read-only", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
+                            Text("GitHub", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
                             Text(
                                 if (gh.configured) "${gh.repo}${gh.branch.ifBlank { " · default branch" }}" else "Attach a repository to cloud analysis",
                                 style = AdType.Tiny,
@@ -317,7 +499,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(11.dp), tint = Muted2)
                         Spacer(Modifier.width(4.dp))
-                        Text("Read-only · Contents + Metadata", style = AdType.Tiny)
+                        Text("Context + applies · optional write token", style = AdType.Tiny)
                     }
                     Spacer(Modifier.height(11.dp))
                     AdButton(
@@ -438,7 +620,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     }
                     Spacer(Modifier.height(7.dp))
                     Text(
-                        "Local replies are generated on this phone and never sent to a server. File changes and checks still use the execution host.",
+                        "Local replies are generated on this phone and never sent to a server. Cloud proposals apply to GitHub as pull requests.",
                         fontSize = 9.5.sp,
                         lineHeight = 14.sp,
                         color = Muted2
@@ -614,7 +796,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     AdDivider()
                     SimpleSettingRow("GitHub token", if (state.githubConfig.tokenSaved) "Encrypted · Keystore" else "No token")
                     AdDivider()
-                    SimpleSettingRow("Workspace", "Simulated · no code runs")
+                    SimpleSettingRow("Workspace", "On this phone")
                     AdDivider()
                     SimpleSettingRow("Local inference", if (LocalEngine.available) "llama.cpp · on this device" else "Unavailable")
                     AdDivider()

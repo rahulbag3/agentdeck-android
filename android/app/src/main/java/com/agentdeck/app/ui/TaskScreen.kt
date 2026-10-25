@@ -105,6 +105,7 @@ import com.agentdeck.app.data.PermissionRequest
 import com.agentdeck.app.data.PlanState
 import com.agentdeck.app.data.Project
 import com.agentdeck.app.data.Task
+import com.agentdeck.app.data.TaskKind
 import com.agentdeck.app.data.TaskStatus
 import com.agentdeck.app.data.TaskTab
 import com.agentdeck.app.ui.theme.Surface as AdSurface
@@ -244,7 +245,7 @@ private fun TaskTopBar(task: Task, project: Project, local: Boolean, cloud: Bool
                     CloudChip()
                 }
                 Spacer(Modifier.width(4.dp))
-                if (cloud) AnalysisTag() else DemoTag()
+                if (cloud) AnalysisTag() else if (!local) HostTag()
             }
         }
         Spacer(Modifier.width(8.dp))
@@ -256,7 +257,8 @@ private fun TaskTopBar(task: Task, project: Project, local: Boolean, cloud: Bool
 private fun TaskTabs(task: Task, active: TaskTab, onSelect: (TaskTab) -> Unit) {
     Column(Modifier.fillMaxWidth().background(AdSurface)) {
         Row(Modifier.fillMaxWidth()) {
-            TaskTab.values().forEach { tab ->
+            val tabs = if (task.kind == TaskKind.CHAT) listOf(TaskTab.CHAT) else TaskTab.values().toList()
+            tabs.forEach { tab ->
                 val selected = tab == active
                 val count = when (tab) {
                     TaskTab.CHAT -> task.messages.size
@@ -315,8 +317,8 @@ private fun ChatContent(
 ) {
     val scroll = rememberScrollState()
     val last = task.messages.lastOrNull()
-    val typing = task.id in state.localTyping ||
-        (task.id in state.cloudStreaming && (last == null || last.role != MessageRole.AGENT || last.text.isBlank()))
+    val typing = task.id in state.cloudStreaming &&
+        (last == null || last.role != MessageRole.AGENT || last.text.isBlank())
     LaunchedEffect(task.id, task.messages.size, last?.text?.length, typing) {
         delay(80)
         scroll.animateScrollTo(scroll.maxValue)
@@ -332,20 +334,27 @@ private fun ChatContent(
         if (local && task.repoContext != null) {
             InfoBanner(
                 title = "Snapshot not used here",
-                text = "This task has a GitHub snapshot from an earlier cloud session. The local preview does not read it. Switch back to cloud to use the snapshot.",
+                text = "This task has a GitHub snapshot from an earlier cloud session. Local models do not read it. Switch back to cloud to use the snapshot.",
                 kind = BannerKind.LOCAL,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        if (task.analysisOnly) {
+        if (task.agentMode) {
+            InfoBanner(
+                title = "Agent task",
+                text = "This task works in the project workspace on this phone: reading files, editing, running shell commands and git. Reads run automatically; every write, command, and commit waits for your approval.",
+                kind = BannerKind.LOCAL,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+        } else if (task.analysisOnly) {
             RepoContextSummary(state, task)
             Spacer(Modifier.height(10.dp))
             InfoBanner(
                 title = "Read-only cloud analysis",
                 text = if (task.repoContext != null) {
-                    "Replies can review the attached snapshot and propose patches. Nothing is written, run, or merged. Apply changes through the execution host."
+                    "Replies can review the attached snapshot and propose patches. Nothing is written until you apply a proposal from the Changes tab — that opens a pull request on GitHub."
                 } else {
-                    "This chat can plan and propose patches, but no repository snapshot is attached. Nothing is written, run, or merged."
+                    "This chat can plan and propose patches, but no repository snapshot is attached. Nothing is written until you apply a proposal from the Changes tab."
                 },
                 kind = BannerKind.CLOUD,
                 modifier = Modifier.padding(bottom = 12.dp)
@@ -573,7 +582,6 @@ private fun MessageBlock(
                 ModelProvider.LOCAL -> LocalChip("On this phone")
                 ModelProvider.HOST -> Unit
             }
-            if (provider == ModelProvider.LOCAL && message.localPreview) PreviewTag()
         }
         Spacer(Modifier.height(3.dp))
         if (provider == ModelProvider.CLOUD) {
@@ -628,7 +636,6 @@ private fun TypingBlock(modelName: String, cloud: Boolean) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(modelName, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Ink)
             if (cloud) CloudChip() else LocalChip("On this phone")
-            if (!cloud) PreviewTag()
         }
         Spacer(Modifier.height(4.dp))
         Row(
@@ -710,17 +717,14 @@ private fun ActivityCard(state: AgentDeckState, task: Task) {
             val hasCloudHistory = task.messages.any { it.cloud || it.provider == ModelProvider.CLOUD } ||
                 task.activity.any { it.type == "cloud" || it.type == "cloud-error" }
             val hasLocalHistory = task.messages.any { it.provider == ModelProvider.LOCAL } ||
-                task.activity.any { it.type == "local" }
+                task.activity.any { it.type == "local" || it.type == "local-engine" }
             val hasLiveHostHistory = task.activity.any { it.type == "host" || it.type == "host-error" }
-            val hasRealLocalHistory = task.activity.any { it.type == "local-engine" } ||
-                task.messages.any { it.provider == ModelProvider.LOCAL && !it.localPreview }
             when {
                 hasLiveHostHistory -> AdTag("Live host", com.agentdeck.app.ui.theme.GreenSoft, com.agentdeck.app.ui.theme.GreenInk)
-                hasRealLocalHistory && hasCloudHistory -> AdTag("Mixed", GraySoft, GrayInk)
-                hasRealLocalHistory -> AdTag("On device", com.agentdeck.app.ui.theme.BlueSoft, com.agentdeck.app.ui.theme.BlueInk)
-                hasCloudHistory && hasLocalHistory -> AdTag("Mixed", GraySoft, GrayInk)
+                hasLocalHistory && hasCloudHistory -> AdTag("Mixed", GraySoft, GrayInk)
+                hasLocalHistory -> AdTag("On device", com.agentdeck.app.ui.theme.BlueSoft, com.agentdeck.app.ui.theme.BlueInk)
                 hasCloudHistory -> CloudChip("Cloud")
-                else -> PreviewTag()
+                else -> AdTag("History", GraySoft, GrayInk)
             }
             Spacer(Modifier.weight(1f))
             Text("${task.activity.size} events", fontSize = 9.sp, color = Muted2)
@@ -957,7 +961,7 @@ private fun TaskHostBanner(state: AgentDeckState, task: Task, local: Boolean, cl
         if (state.canReachHost()) return
         InfoBanner(
             title = "${state.data.host.name} is offline",
-            text = "Cloud analysis still works. File changes, checks, and approvals need the host.",
+            text = "Cloud analysis and GitHub applies still work. Only host-agent tasks need a reconnect.",
             kind = BannerKind.CLOUD,
             modifier = Modifier.padding(bottom = 12.dp),
             action = {
@@ -970,9 +974,9 @@ private fun TaskHostBanner(state: AgentDeckState, task: Task, local: Boolean, cl
     val model = state.model(task.modelId)
     val copy = if (local) {
         when (model?.localState) {
-            LocalModelState.READY -> "Local chat is available on this phone. File changes, checks, and approvals need the host."
-            LocalModelState.LOADING -> "The local model is loading. File changes, checks, and approvals still need the host."
-            else -> "This local model is ${model?.localState?.label?.lowercase() ?: "not ready"}. Load it in Settings to chat on this phone. File changes and checks need the host."
+            LocalModelState.READY -> "Local chat is available on this phone. Only host-agent tasks need a reconnect."
+            LocalModelState.LOADING -> "The local model is loading. Only host-agent tasks need a reconnect."
+            else -> "This local model is ${model?.localState?.label?.lowercase() ?: "not ready"}. Load it in Settings to chat on this phone."
         }
     } else {
         "Host models and execution need a reconnect."
@@ -986,6 +990,66 @@ private fun TaskHostBanner(state: AgentDeckState, task: Task, local: Boolean, cl
             AdButton("Reconnect", onClick = state::reconnectHost, kind = AdButtonKind.OUTLINE, small = true)
         }
     )
+}
+
+/** Compact inline notice above the composer input; keeps switching reachable. */
+@Composable
+private fun ComposerNotice(
+    text: String,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
+    secondLabel: String? = null,
+    onSecond: () -> Unit = {}
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(AmberSoft)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Outlined.Info,
+            contentDescription = null,
+            modifier = Modifier.size(12.dp),
+            tint = AmberInk
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text,
+            modifier = Modifier.weight(1f),
+            fontSize = 9.5.sp,
+            lineHeight = 13.sp,
+            color = AmberInk
+        )
+        if (actionLabel != null) {
+            Text(
+                actionLabel,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(7.dp))
+                    .clickable(onClick = onAction)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = BlueInk
+            )
+        }
+        if (secondLabel != null) {
+            Spacer(Modifier.width(4.dp))
+            Text(
+                secondLabel,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(7.dp))
+                    .clickable(onClick = onSecond)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = BlueInk
+            )
+        }
+    }
 }
 
 @Composable
@@ -1006,54 +1070,11 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
         }
         return
     }
-    if (local && modelState != LocalModelState.READY) {
-        Surface(Modifier.fillMaxWidth(), color = AdSurface, border = BorderStroke(1.dp, Line)) {
-            Column(Modifier.navigationBarsPadding().imePadding().padding(13.dp)) {
-                InfoBanner(
-                    title = if (modelState == LocalModelState.LOADING) "Loading local model" else "Local model is not loaded",
-                    text = if (modelState == LocalModelState.LOADING) {
-                        "Wait for the model to finish loading on this phone."
-                    } else {
-                        "Load it in Settings to chat on this phone. The execution host is separate."
-                    },
-                    kind = BannerKind.LOCAL,
-                    action = {
-                        AdButton("Manage models", onClick = state::openSettings, kind = AdButtonKind.OUTLINE, small = true)
-                    }
-                )
-            }
-        }
-        return
-    }
-    if (cloud && !state.cloudConfig.configured) {
-        Surface(Modifier.fillMaxWidth(), color = AdSurface, border = BorderStroke(1.dp, Line)) {
-            Column(Modifier.navigationBarsPadding().imePadding().padding(13.dp)) {
-                InfoBanner(
-                    title = "Cloud API is not configured",
-                    text = "This task's messages cannot continue until you connect the API again.",
-                    kind = BannerKind.CLOUD,
-                    action = {
-                        AdButton("Set up", onClick = state::openCloudSetup, kind = AdButtonKind.OUTLINE, small = true)
-                    }
-                )
-            }
-        }
-        return
-    }
-    if (!local && !cloud && !state.canReachHost()) {
-        Surface(Modifier.fillMaxWidth(), color = AdSurface, border = BorderStroke(1.dp, Line)) {
-            Column(Modifier.navigationBarsPadding().imePadding().padding(13.dp)) {
-                InfoBanner(
-                    title = "${state.data.host.name} is offline",
-                    text = "Reconnect to send messages to this host model.",
-                    action = {
-                        AdButton("Reconnect", onClick = state::reconnectHost, kind = AdButtonKind.OUTLINE, small = true)
-                    }
-                )
-            }
-        }
-        return
-    }
+    // Blocked senders keep the composer (and its Change control) visible; only
+    // sending is disabled, so the user can always switch models from here.
+    val localBlocked = local && modelState != LocalModelState.READY
+    val cloudBlocked = cloud && !state.cloudConfig.configured
+    val hostBlocked = !local && !cloud && !state.canReachHost()
 
     var text by remember(task.id) { mutableStateOf("") }
     val streamingCloud = state.isCloudStreaming(task.id)
@@ -1062,7 +1083,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
     val streaming = streamingCloud || streamingHost || streamingLocal
     val retryCloud = state.canRetryCloudReply(task.id)
     val busy = state.isTaskBusy(task.id)
-    val canSend = text.isNotBlank() && !busy
+    val canSend = text.isNotBlank() && !busy && !localBlocked && !cloudBlocked && !hostBlocked
     val switchable = local || cloud
     fun send() {
         if (!canSend) return
@@ -1114,6 +1135,35 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                     )
                 }
             }
+            if (localBlocked) {
+                ComposerNotice(
+                    text = when {
+                        modelState == LocalModelState.LOADING -> "Loading local model…"
+                        model == null -> "This task's model is no longer available"
+                        else -> "Local model not loaded"
+                    },
+                    actionLabel = if (model == null) null else "Load",
+                    onAction = state::openSettings,
+                    secondLabel = "Change model",
+                    onSecond = { state.openTaskModels(task.id) }
+                )
+            }
+            if (cloudBlocked) {
+                ComposerNotice(
+                    text = "Cloud API is not configured",
+                    actionLabel = "Set up",
+                    onAction = state::openCloudSetup,
+                    secondLabel = "Change model",
+                    onSecond = { state.openTaskModels(task.id) }
+                )
+            }
+            if (hostBlocked) {
+                ComposerNotice(
+                    text = "${state.data.host.name} is offline",
+                    actionLabel = "Reconnect",
+                    onAction = state::reconnectHost
+                )
+            }
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(
                     modifier = Modifier
@@ -1127,6 +1177,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                     if (text.isEmpty()) {
                         Text(
                             when {
+                                task.agentMode -> "Instruct the agent…"
                                 cloud -> "Ask about the code…"
                                 local -> "Message locally…"
                                 task.status == TaskStatus.NEEDS_INPUT -> "Answer the agent…"
@@ -1235,12 +1286,8 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                 streamingHost -> "Host run in progress. Stop to cancel the agent on the host; reported changes stay."
                 streamingLocal -> "Generating on this phone. Stop to keep the partial reply; nothing is changed or run."
                 streamingCloud -> "Cloud reply streaming. Stop to keep the partial reply; nothing is changed or run."
-                cloud -> "Nothing is changed or run. File changes, checks, and approvals require the host."
-                local -> if (state.canReachHost()) {
-                    "Runs on this phone. File changes, checks, and approvals still require the host."
-                } else {
-                    "Local chat is available. File changes, checks, and approvals need the host."
-                }
+                cloud -> "Nothing is changed or run here. Apply proposed files from the Changes tab to open a pull request."
+                local -> "Runs on this phone. Nothing is changed or run here."
                 task.status == TaskStatus.FAILED -> "This task is stopped. Messages are saved; retry the task to resume."
                 task.status == TaskStatus.NEEDS_INPUT && task.permissionRequest != null -> "Resolve the permission request above, or reply below."
                 else -> "Message the agent on ${state.data.host.name}."
@@ -1283,26 +1330,28 @@ private fun ChangesContent(
             Spacer(Modifier.height(10.dp))
         }
         if (task.changedFiles.isEmpty()) {
-            AdEmptyState(
-                icon = when {
-                    cloud -> Icons.Outlined.Cloud
-                    local -> Icons.Outlined.PhoneAndroid
-                    else -> Icons.Outlined.Description
-                },
-                title = when {
-                    cloud -> "Read-only analysis"
-                    local -> "Local chat only"
-                    else -> "No changes yet"
-                },
-                text = when {
-                    cloud -> "This cloud task can read code and propose patches, but it cannot write files. Apply changes through the execution host, then review the resulting task."
-                    local -> "This task is scoped to a local explanation. File changes require the execution host."
-                    else -> "Files will appear here as the agent edits the project."
-                },
-                action = {
-                    AdButton("Back to chat", onClick = { state.selectTaskTab(TaskTab.CHAT) }, kind = AdButtonKind.OUTLINE, small = true)
-                }
-            )
+            if (cloud) {
+                ProposalCard(state, task)
+                Spacer(Modifier.height(10.dp))
+            } else {
+                AdEmptyState(
+                    icon = when {
+                        local -> Icons.Outlined.PhoneAndroid
+                        else -> Icons.Outlined.Description
+                    },
+                    title = when {
+                        local -> "Local chat only"
+                        else -> "No changes yet"
+                    },
+                    text = when {
+                        local -> "This task is scoped to a local explanation. Proposals apply to GitHub from cloud tasks."
+                        else -> "Files appear here after a proposal is applied."
+                    },
+                    action = {
+                        AdButton("Back to chat", onClick = { state.selectTaskTab(TaskTab.CHAT) }, kind = AdButtonKind.OUTLINE, small = true)
+                    }
+                )
+            }
         } else {
             task.changedFiles.forEach { file ->
                 FileRow(file = file, onClick = { state.selectDiffFile(file.id) })
@@ -1314,6 +1363,67 @@ private fun ChangesContent(
             ReadinessNote(task)
         }
         Spacer(Modifier.height(18.dp))
+    }
+}
+
+@Composable
+private fun ProposalCard(state: AgentDeckState, task: Task) {
+    val proposals = androidx.compose.runtime.remember(task.messages) { state.proposedFilesFor(task) }
+    val hasToken = state.hasGithubWriteToken()
+    val applying = state.isApplyingProposal(task.id)
+    AdCard {
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Cloud, contentDescription = null, modifier = Modifier.size(14.dp), tint = Muted)
+                Spacer(Modifier.width(6.dp))
+                Text("Cloud proposal", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Spacer(Modifier.weight(1f))
+                if (proposals.isNotEmpty()) {
+                    Text("${proposals.size} file${if (proposals.size == 1) "" else "s"}", fontSize = 9.5.sp, color = Muted)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            if (proposals.isEmpty()) {
+                Text(
+                    "This cloud task analyses and proposes changes in chat. When a reply includes proposed files, apply them here to commit a branch and open a pull request on GitHub.",
+                    style = AdType.Meta,
+                    lineHeight = 15.sp
+                )
+            } else {
+                proposals.take(5).forEach { proposal ->
+                    Text(
+                        proposal.path,
+                        fontFamily = Mono,
+                        fontSize = 9.5.sp,
+                        color = InkSoft,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (proposals.size > 5) {
+                    Text("+${proposals.size - 5} more file${if (proposals.size - 5 == 1) "" else "s"}", fontSize = 9.5.sp, color = Muted2)
+                }
+                Spacer(Modifier.height(10.dp))
+                AdButton(
+                    if (applying) "Applying to GitHub…" else "Apply · branch + pull request",
+                    onClick = { state.applyProposal(task.id) },
+                    enabled = !applying,
+                    fillWidth = true,
+                    small = true
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (hasToken) {
+                        "Commits these files to a new branch and opens a pull request against ${state.githubConfig.branch.ifBlank { "the default branch" }}. CI checks appear in the Checks tab."
+                    } else {
+                        "Needs a GitHub token with write access. Add one in Settings → Repository context, then apply."
+                    },
+                    fontSize = 9.5.sp,
+                    lineHeight = 14.sp,
+                    color = Muted2
+                )
+            }
+        }
     }
 }
 
@@ -1446,7 +1556,7 @@ private fun FileRow(file: ChangedFile, onClick: () -> Unit) {
 private fun ReadinessNote(task: Task) {
     val text = when (task.status) {
         TaskStatus.REVIEW -> "Review additions and deletions, then approve the work or request changes."
-        TaskStatus.COMPLETED -> "This work was approved. The preview stays available in history."
+        TaskStatus.COMPLETED -> "This work was approved. It stays in history."
         TaskStatus.FAILED -> "This task stopped before finishing. Review the changes, then retry."
         TaskStatus.NEEDS_INPUT -> "Waiting for your response before work continues."
         TaskStatus.PENDING -> "The task is queued. Files will appear when execution starts."
@@ -1689,6 +1799,7 @@ private fun ChecksContent(
     ) {
         TaskHostBanner(state, task, local, cloud)
         if (task.checks.isEmpty()) {
+            val applied = task.branch.startsWith("agentdeck/")
             AdEmptyState(
                 icon = when {
                     cloud -> Icons.Outlined.Cloud
@@ -1697,16 +1808,36 @@ private fun ChecksContent(
                 },
                 title = if (local || cloud) "No checks were run" else "Checks have not run yet",
                 text = when {
-                    cloud -> "Cloud analysis cannot run tests or commands. Checks run on the execution host after a change is applied there."
-                    local -> "This local task did not request execution. Checks run on the execution host."
+                    cloud && applied -> "CI on the pull request branch has not reported runs yet. GitHub repositories without workflows show none."
+                    cloud -> "Checks appear here after a proposal is applied. CI workflows that the repository already runs (for example GitHub Actions) report into this tab."
+                    local -> "This task chats on the phone. Checks come from CI after a cloud proposal is applied to GitHub."
                     else -> "The agent runs the configured checks before asking for review. Nothing has been reported yet."
                 },
                 action = {
-                    AdButton("Open chat", onClick = { state.selectTaskTab(TaskTab.CHAT) }, kind = AdButtonKind.OUTLINE, small = true)
+                    AdButton(
+                        if (applied) "Refresh CI status" else "Open chat",
+                        onClick = {
+                            if (applied) state.refreshGithubChecks(task.id)
+                            else state.selectTaskTab(TaskTab.CHAT)
+                        },
+                        kind = AdButtonKind.OUTLINE,
+                        small = true
+                    )
                 }
             )
             Spacer(Modifier.height(18.dp))
             return@Column
+        }
+        if (cloud && task.branch.startsWith("agentdeck/")) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                AdButton(
+                    "Refresh CI status",
+                    onClick = { state.refreshGithubChecks(task.id) },
+                    kind = AdButtonKind.OUTLINE,
+                    small = true
+                )
+            }
+            Spacer(Modifier.height(8.dp))
         }
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -1741,7 +1872,6 @@ private fun ChecksContent(
                         color = Muted
                     )
                 }
-                PreviewTag()
             }
         }
         Spacer(Modifier.height(10.dp))

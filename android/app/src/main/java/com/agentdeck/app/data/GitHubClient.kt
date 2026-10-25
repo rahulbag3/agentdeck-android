@@ -7,17 +7,35 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class GitHubException(message: String) : Exception(message)
 
+data class PullRequestResult(
+    val number: Int,
+    val url: String,
+    val alreadyOpen: Boolean
+)
+
+data class GithubCheckResult(
+    val name: String,
+    val status: CheckStatus,
+    val summary: String,
+    val url: String,
+    val running: Boolean
+)
+
 /**
- * Read-only GitHub connector. The user supplies an optional fine-grained token
- * scoped to Contents: Read + Metadata: Read. Nothing is written to GitHub.
+ * GitHub connector. Reads work with or without a token; write operations
+ * (branch, commit, pull request) require the user's fine-grained token with
+ * Contents + Pull requests write access. Writes happen only when the user
+ * explicitly applies a proposal — the model never triggers them.
  */
 class GitHubClient(private val client: OkHttpClient = defaultClient()) {
 
@@ -90,8 +108,232 @@ class GitHubClient(private val client: OkHttpClient = defaultClient()) {
         )
     }
 
-    private suspend fun repoInfo(owner: String, name: String, token: String?): GitHubRepoInfo {
-        val url = apiUrl(listOf("repos", owner, name))
+    // ----- proposal apply (write path; user-initiated only) -----
+
+    /** Resolves the head commit sha of a branch. */
+    suspend fun branchHeadSha(owner: String, name: String, branch: String, token: String?): String =
+        withContext(Dispatchers.IO) {
+            val url = apiUrl(listOf("repos", owner, name, "git", "ref", "heads", branch))
+            val (code, body, headers) = get(url, requireWriteToken(token))
+            ensureWriteOk(code, headers, "branch $branch")
+            val json = runCatching { JSONObject(body) }
+                .getOrElse { throw GitHubException("GitHub returned an unexpected branch response.") }
+            json.optJSONObject("object")?.optString("sha").orEmpty().ifBlank {
+                throw GitHubException("GitHub returned no sha for branch $branch.")
+            }
+        }
+
+    /** Creates the branch, or returns the existing head sha when it already exists. */
+    suspend fun ensureBranch(
+        owner: String,
+        name: String,
+        branch: String,
+        fromSha: String,
+        token: String?
+    ): String = withContext(Dispatchers.IO) {
+        val url = apiUrl(listOf("repos", owner, name, "git", "refs"))
+        val body = JSONObject()
+            .put("ref", "refs/heads/$branch")
+            .put("sha", fromSha)
+        val (code, _, headers) = send("POST", url, requireWriteToken(token), body)
+        when {
+            code in 200..201 -> fromSha
+            code == 422 -> branchHeadSha(owner, name, branch, token)
+            else -> {
+                ensureWriteOk(code, headers, "branch $branch")
+                throw GitHubException("GitHub refused to create branch $branch ($code).")
+            }
+        }
+    }
+
+    /** Commits the full new content of one file to the branch. Returns the commit sha. */
+    suspend fun putFile(
+        owner: String,
+        name: String,
+        path: String,
+        branch: String,
+        content: String,
+        message: String,
+        token: String?
+    ): String = withContext(Dispatchers.IO) {
+        val existingSha = currentFileSha(owner, name, branch, path, token)
+        val urlBuilder = apiUrlBuilder(listOf("repos", owner, name, "contents"))
+        path.split('/').filter { it.isNotBlank() }.forEach { urlBuilder.addPathSegment(it) }
+        val body = JSONObject()
+            .put("message", message)
+            .put("content", java.util.Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8)))
+            .put("branch", branch)
+        if (existingSha != null) body.put("sha", existingSha)
+        val (code, responseBody, headers) = send("PUT", urlBuilder.build(), requireWriteToken(token), body)
+        if (code !in 200..201) {
+            ensureWriteOk(code, headers, "file $path")
+            throw GitHubException("GitHub refused the commit for $path ($code).")
+        }
+        val json = runCatching { JSONObject(responseBody) }.getOrNull()
+        json?.optJSONObject("commit")?.optString("sha").orEmpty().ifBlank { "committed" }
+    }
+
+    /** Opens a pull request; when one is already open for the head, returns it. */
+    suspend fun createPullRequest(
+        owner: String,
+        name: String,
+        head: String,
+        base: String,
+        title: String,
+        bodyText: String,
+        token: String?
+    ): PullRequestResult = withContext(Dispatchers.IO) {
+        val url = apiUrl(listOf("repos", owner, name, "pulls"))
+        val body = JSONObject()
+            .put("title", title)
+            .put("head", head)
+            .put("base", base)
+            .put("body", bodyText)
+        val (code, responseBody, headers) = send("POST", url, requireWriteToken(token), body)
+        when {
+            code == 201 -> {
+                val json = runCatching { JSONObject(responseBody) }.getOrNull()
+                val number = json?.optInt("number", 0) ?: 0
+                val html = json?.optString("html_url").orEmpty()
+                if (number > 0 && html.isNotBlank()) {
+                    PullRequestResult(number, html, alreadyOpen = false)
+                } else {
+                    throw GitHubException("GitHub created the pull request but returned no link.")
+                }
+            }
+            code == 422 -> findOpenPullRequest(owner, name, head, token)
+                ?: throw GitHubException("A pull request for this branch already exists or the branch has no changes.")
+            else -> {
+                ensureWriteOk(code, headers, "pull request")
+                throw GitHubException("GitHub refused the pull request ($code).")
+            }
+        }
+    }
+
+    /** CI check runs attached to a ref (branch or sha). */
+    suspend fun checkRuns(owner: String, name: String, ref: String, token: String?): List<GithubCheckResult> =
+        withContext(Dispatchers.IO) {
+            val url = apiUrl(listOf("repos", owner, name, "commits", ref, "check-runs"))
+            val (code, body, headers) = get(url, token)
+            ensureOk(code, headers, "check runs for $ref")
+            val json = runCatching { JSONObject(body) }
+                .getOrElse { return@withContext emptyList() }
+            val runs = json.optJSONArray("check_runs") ?: return@withContext emptyList()
+            (0 until runs.length()).mapNotNull { index ->
+                val run = runs.optJSONObject(index) ?: return@mapNotNull null
+                val status = run.optString("status")
+                val conclusion = run.optString("conclusion")
+                val mapped = when {
+                    status == "queued" -> CheckStatus.NOT_RUN to "Queued"
+                    status == "in_progress" -> CheckStatus.NOT_RUN to "Running"
+                    conclusion == "success" -> CheckStatus.PASSED to "Passed"
+                    conclusion == "skipped" || conclusion == "neutral" -> CheckStatus.SKIPPED to "Skipped"
+                    conclusion.isNotBlank() -> CheckStatus.FAILED to conclusion.replace('_', ' ')
+                        .replaceFirstChar { it.uppercase() }
+                    else -> CheckStatus.NOT_RUN to "No checks yet"
+                }
+                GithubCheckResult(
+                    name = run.optString("name").ifBlank { "Check" },
+                    status = mapped.first,
+                    summary = mapped.second,
+                    url = run.optString("html_url").ifBlank { run.optString("details_url") },
+                    running = status == "queued" || status == "in_progress"
+                )
+            }
+        }
+
+    private suspend fun findOpenPullRequest(
+        owner: String,
+        name: String,
+        headBranch: String,
+        token: String?
+    ): PullRequestResult? = withContext(Dispatchers.IO) {
+        val url = apiUrl(listOf("repos", owner, name, "pulls"))
+            .newBuilder()
+            .addQueryParameter("head", "$owner:$headBranch")
+            .addQueryParameter("state", "open")
+            .build()
+        val (code, body, headers) = get(url, token)
+        ensureOk(code, headers, "pull request")
+        val array = runCatching { org.json.JSONArray(body) }.getOrNull() ?: return@withContext null
+        if (array.length() == 0) return@withContext null
+        val pr = array.optJSONObject(0) ?: return@withContext null
+        PullRequestResult(
+            number = pr.optInt("number", 0),
+            url = pr.optString("html_url").orEmpty(),
+            alreadyOpen = true
+        )
+    }
+
+    private suspend fun currentFileSha(
+        owner: String,
+        name: String,
+        branch: String,
+        path: String,
+        token: String?
+    ): String? = withContext(Dispatchers.IO) {
+        val builder = apiUrlBuilder(listOf("repos", owner, name, "contents"))
+        path.split('/').filter { it.isNotBlank() }.forEach { builder.addPathSegment(it) }
+        builder.addQueryParameter("ref", branch)
+        val (code, body, _) = get(builder.build(), token)
+        if (code == 404) return@withContext null
+        if (code !in 200..299) return@withContext null
+        runCatching { JSONObject(body).optString("sha") }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    private suspend fun send(
+        method: String,
+        url: HttpUrl,
+        token: String?,
+        body: JSONObject
+    ): Triple<Int, String, okhttp3.Headers> {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "AgentDeck-Android")
+            .header("Authorization", "Bearer ${requireWriteToken(token).trim()}")
+            .method(
+                method,
+                body.toString().toRequestBody("application/json".toMediaType())
+            )
+        val call = client.newCall(builder.build())
+        val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+        return try {
+            call.execute().use { response ->
+                Triple(response.code, response.peekBody(MAX_RESPONSE_CHARS.toLong()).string(), response.headers)
+            }
+        } catch (error: IOException) {
+            currentCoroutineContext().ensureActive()
+            throw GitHubException("Could not reach GitHub. Check your connection and try again.")
+        } finally {
+            cancellation?.dispose()
+        }
+    }
+
+    private fun requireWriteToken(token: String?): String =
+        token?.takeIf { it.isNotBlank() }
+            ?: throw GitHubException(
+                "A GitHub token with write access is required. Add a fine-grained token with Contents and Pull requests write permission in Settings."
+            )
+
+    private fun ensureWriteOk(code: Int, headers: okhttp3.Headers, thing: String) {
+        if (code in 200..299) return
+        when (code) {
+            401 -> throw GitHubException("GitHub rejected the token. Check that it is valid and still active.")
+            403 -> throw GitHubException(
+                "The token does not allow this. Applying needs a fine-grained token with Contents and Pull requests write access to this repository."
+            )
+            404 -> throw GitHubException("GitHub could not find this $thing. Check the repository, branch, and token access.")
+            409 -> throw GitHubException("GitHub reported a conflict on $thing. Refresh and try again.")
+            422 -> throw GitHubException("GitHub rejected $thing as invalid. The branch may have moved; try again.")
+            429 -> throw GitHubException("GitHub rate limit reached. Wait a few minutes and try again.")
+            in 500..599 -> throw GitHubException("GitHub had a server error. Try again in a moment.")
+            else -> throw GitHubException("GitHub returned an error ($code).")
+        }
+    }
+
+    private suspend fun repoInfo(owner: String, name: String, token: String?): GitHubRepoInfo {        val url = apiUrl(listOf("repos", owner, name))
         val (code, body, headers) = get(url, token)
         ensureOk(code, headers, "repository")
         val json = runCatching { JSONObject(body) }

@@ -21,12 +21,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Warning
@@ -50,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentdeck.app.data.TaskKind
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.LocalModelState
 import com.agentdeck.app.data.ModelOption
@@ -93,25 +96,35 @@ fun NewTaskScreen(state: AgentDeckState) {
                 .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (!online) {
+            if (!online && selectedModel?.isHost == true) {
                 InfoBanner(
                     title = "Host offline",
-                    text = when {
-                        cloud -> "Cloud analysis can start now. File changes, checks, and approvals need ${state.data.host.name}."
-                        local -> "This local task can be created and chat on this phone. File changes and checks require ${state.data.host.name}."
-                        else -> "You can prepare the task; it cannot start until the host reconnects."
-                    },
-                    kind = when {
-                        cloud -> BannerKind.CLOUD
-                        local -> BannerKind.LOCAL
-                        else -> BannerKind.WARNING
-                    },
+                    text = "You can prepare this task; it cannot start until ${state.data.host.name} reconnects.",
+                    kind = BannerKind.WARNING,
                     action = {
                         AdButton("Reconnect", onClick = state::reconnectHost, kind = AdButtonKind.OUTLINE, small = true)
                     }
                 )
                 Spacer(Modifier.height(10.dp))
             }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                ModeCard(
+                    title = "Chat",
+                    subtitle = "Ask, research, web, memory",
+                    selected = draft.taskKind == TaskKind.CHAT,
+                    onClick = { state.updateDraftTaskKind(TaskKind.CHAT) },
+                    modifier = Modifier.weight(1f)
+                )
+                ModeCard(
+                    title = "Coding",
+                    subtitle = "Workspace, files, git, shell",
+                    selected = draft.taskKind == TaskKind.CODING,
+                    onClick = { state.updateDraftTaskKind(TaskKind.CODING) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(10.dp))
 
             FormLabel("Task")
             AdTextField(
@@ -139,13 +152,15 @@ fun NewTaskScreen(state: AgentDeckState) {
                 modifier = Modifier.padding(top = 6.dp)
             )
 
-            Spacer(Modifier.height(12.dp))
-            FormLabel("Project")
-            ProjectDropdown(
-                project = project,
-                projects = state.data.projects,
-                onSelect = state::updateDraftProject
-            )
+            if (draft.taskKind == TaskKind.CODING) {
+                Spacer(Modifier.height(12.dp))
+                FormLabel("Project")
+                ProjectDropdown(
+                    project = project,
+                    projects = state.data.projects,
+                    onSelect = state::updateDraftProject
+                )
+            }
 
             Spacer(Modifier.height(12.dp))
             FormLabel("Model")
@@ -159,7 +174,7 @@ fun NewTaskScreen(state: AgentDeckState) {
                     local && !ready -> "This model is ${selectedModel.localState?.label?.lowercase() ?: "not ready"}. Load it in Settings before creating the task."
                     cloud && !ready -> "Connect a cloud API in Settings before creating this task."
                     cloud -> "Analysis only. Requests go directly from this phone; nothing is changed or run."
-                    local -> "Inference runs on this phone. File changes, checks, and approvals still require the host."
+                    local -> "Inference runs on this phone. Nothing is changed or run here."
                     else -> "Host model · runs on ${state.data.host.name}."
                 },
                 style = AdType.Tiny,
@@ -230,8 +245,8 @@ fun NewTaskScreen(state: AgentDeckState) {
                 )
                 Text(
                     when {
-                        cloud -> "Cloud analysis starts now. Changes and checks require the host."
-                        local -> "Local chat starts on this phone. File changes and checks require the host."
+                        cloud -> "Cloud analysis starts now. Proposed files apply to GitHub from the Changes tab."
+                        local -> "Local chat starts on this phone. Nothing is changed or run here."
                         else -> "The task is queued immediately. Nothing is pushed or merged."
                     },
                     style = AdType.Tiny,
@@ -418,6 +433,62 @@ private fun CloudContextPicker(state: AgentDeckState, draft: com.agentdeck.app.d
                     )
                 }
             }
+            if (state.model(draft.modelId)?.isCloud == true) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(9.dp))
+                        .clickable { state.updateDraftAgentMode(!draft.agentMode) }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = draft.agentMode,
+                        onCheckedChange = { state.updateDraftAgentMode(it) },
+                        colors = CheckboxDefaults.colors(checkedColor = Ink, uncheckedColor = Muted)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Run as agent", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                        Text(
+                            "Reads and edits files in the project workspace, runs shell commands and git — every write needs your approval",
+                            fontSize = 9.5.sp,
+                            lineHeight = 13.sp,
+                            color = Muted2
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            val saved = state.instructions.all()
+            if (saved.isNotEmpty()) {
+                FormLabel("Instructions", optional = true)
+                saved.take(6).forEach { item ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { state.updateDraftInstruction(if (draft.instructionId == item.id) "" else item.id) }
+                            .padding(horizontal = 4.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (draft.instructionId == item.id) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = null,
+                            modifier = Modifier.size(13.dp),
+                            tint = if (draft.instructionId == item.id) BlueInk else Muted2
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(item.name, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text(item.body.take(70), fontSize = 9.sp, lineHeight = 12.sp, color = Muted2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+
             Spacer(Modifier.height(5.dp))
             Text(
                 if (draft.useRepoContext) {
@@ -595,5 +666,33 @@ private fun ErrorCard(
                 )
             }
         }
+    }
+}
+
+
+@Composable
+private fun ModeCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(13.dp))
+            .background(if (selected) BlueSoft else Surface2)
+            .border(1.dp, if (selected) BlueInk else Line, RoundedCornerShape(13.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 10.dp)
+    ) {
+        Text(
+            title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (selected) BlueInk else Ink
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(subtitle, fontSize = 8.5.sp, lineHeight = 11.sp, color = Muted2)
     }
 }

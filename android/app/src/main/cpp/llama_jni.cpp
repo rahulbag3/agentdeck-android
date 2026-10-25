@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -300,6 +301,12 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
     std::unique_lock<std::mutex> lock(session->mutex);
     session->cancelled.store(false);
 
+    // Each call re-prefills the whole conversation, so any KV state from a
+    // previous reply is stale. Without clearing it, the second message in a
+    // conversation appends onto a full cache and decode fails ("failed to
+    // find a memory slot"), which cuts replies off mid-generation.
+    llama_memory_clear(llama_get_memory(session->ctx), true);
+
     std::vector<std::pair<std::string, std::string>> history;
     const jsize count = roles != nullptr ? env->GetArrayLength(roles) : 0;
     for (jsize i = 0; i < count; i++) {
@@ -333,7 +340,20 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
     int budget = nCtx - maxTokens - 8;
     if (budget < 16) budget = std::max(16, nCtx / 2);
     if (static_cast<int>(tokens.size()) > budget) {
-        tokens.erase(tokens.begin(), tokens.end() - budget);
+        // Over budget: keep the template/system head (the model needs its
+        // opening structure) plus the most recent tokens, dropping the
+        // middle. Keeping only the tail previously cut the chat template
+        // apart and produced silence or garbage.
+        const size_t headKeep = std::min<size_t>(tokens.size(), 256);
+        const size_t tailKeep = static_cast<size_t>(budget) - headKeep;
+        std::vector<llama_token> kept(
+            tokens.begin(),
+            tokens.begin() + static_cast<long>(headKeep));
+        kept.insert(
+            kept.end(),
+            tokens.end() - static_cast<long>(tailKeep),
+            tokens.end());
+        tokens.swap(kept);
     }
 
     jclass callbackClass = env->GetObjectClass(callback);
@@ -364,6 +384,7 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
     int generated = 0;
+    std::string pending;  // incomplete UTF-8 tail carried across tokens
     for (int i = 0; i < maxTokens; i++) {
         if (session->cancelled.load()) { generated = -3; break; }
         llama_token id = llama_sampler_sample(sampler, session->ctx, -1);
@@ -373,16 +394,59 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
         char piece[256];
         int pieceLength = llama_token_to_piece(session->vocab, id, piece, sizeof(piece), 0, true);
         if (pieceLength > 0) {
-            std::string text(piece, static_cast<size_t>(pieceLength));
-            jstring javaText = env->NewStringUTF(text.c_str());
-            jboolean keep = env->CallBooleanMethod(callback, onToken, javaText);
-            env->DeleteLocalRef(javaText);
-            if (env->ExceptionCheck()) {
-                env->ExceptionClear();
-                generated = -3;
-                break;
+            pending.append(piece, static_cast<size_t>(pieceLength));
+            // Multi-byte UTF-8 characters can be split across tokens, and
+            // NewStringUTF aborts the process on such fragments. Decode into
+            // UTF-16 ourselves; incomplete trailing bytes wait for the next
+            // token, invalid sequences become U+FFFD.
+            std::u16string utf16;
+            size_t at = 0;
+            const size_t len = pending.size();
+            while (at < len) {
+                const unsigned char lead = static_cast<unsigned char>(pending[at]);
+                size_t need;
+                uint32_t cp;
+                if (lead < 0x80) { need = 1; cp = lead; }
+                else if ((lead & 0xE0) == 0xC0) { need = 2; cp = lead & 0x1F; }
+                else if ((lead & 0xF0) == 0xE0) { need = 3; cp = lead & 0x0F; }
+                else if ((lead & 0xF8) == 0xF0) { need = 4; cp = lead & 0x07; }
+                else { utf16.push_back(u'\uFFFD'); at++; continue; }
+                if (at + need > len) break;  // incomplete tail stays pending
+                bool valid = true;
+                for (size_t k = 1; k < need; k++) {
+                    const unsigned char cont = static_cast<unsigned char>(pending[at + k]);
+                    if ((cont & 0xC0) != 0x80) { valid = false; break; }
+                    cp = (cp << 6) | (cont & 0x3F);
+                }
+                if (!valid ||
+                    (need == 2 && cp < 0x80) || (need == 3 && cp < 0x800) ||
+                    (need == 4 && cp < 0x10000) || cp > 0x10FFFF ||
+                    (cp >= 0xD800 && cp <= 0xDFFF)) {
+                    utf16.push_back(u'\uFFFD');
+                    at++;
+                    continue;
+                }
+                if (cp <= 0xFFFF) {
+                    utf16.push_back(static_cast<char16_t>(cp));
+                } else {
+                    cp -= 0x10000;
+                    utf16.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
+                    utf16.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
+                }
+                at += need;
             }
-            if (keep == JNI_FALSE) { generated = -3; break; }
+            pending.erase(0, at);
+            if (!utf16.empty()) {
+                jstring javaText = env->NewString(reinterpret_cast<const jchar *>(utf16.data()), static_cast<jsize>(utf16.size()));
+                jboolean keep = env->CallBooleanMethod(callback, onToken, javaText);
+                env->DeleteLocalRef(javaText);
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    generated = -3;
+                    break;
+                }
+                if (keep == JNI_FALSE) { generated = -3; break; }
+            }
         }
         generated++;
         llama_batch batch = llama_batch_get_one(&id, 1);

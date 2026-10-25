@@ -1,6 +1,7 @@
 package com.agentdeck.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentdeck.app.data.TaskKind
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.StatusFilter
 import com.agentdeck.app.data.Task
@@ -78,7 +80,7 @@ fun HomeScreen(state: AgentDeckState) {
     val recent = if (filtering) visible.take(12) else visible.take(4)
 
     Column(Modifier.fillMaxSize().background(Surface2)) {
-        HomeTopBar(onDemo = state::openDemoInfo, onSettings = state::openSettings)
+        HomeTopBar(onAbout = state::openAbout, onSettings = state::openSettings)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
@@ -102,11 +104,21 @@ fun HomeScreen(state: AgentDeckState) {
                 }
             }
 
-            if (!state.data.settings.demoNoticeDismissed) {
-                item {
-                    DemoNoticeCard(
-                        onDetails = state::openDemoInfo,
-                        onDismiss = state::dismissDemoNotice
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.fillMaxWidth()) {
+                    ModeLauncherCard(
+                        title = "Chat",
+                        subtitle = "Ask · research · web · memory",
+                        selected = true,
+                        onClick = { state.openNewTask(TaskKind.CHAT) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    ModeLauncherCard(
+                        title = "Coding",
+                        subtitle = "Workspace · files · git · shell",
+                        selected = false,
+                        onClick = { state.openNewTask(TaskKind.CODING) },
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -208,7 +220,7 @@ fun HomeScreen(state: AgentDeckState) {
 
             item {
                 Text(
-                    "Local workspace · execution simulated · local GGUF runs on this phone",
+                    "Cloud and on-device chat run on this phone · proposals apply to GitHub as pull requests",
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     fontSize = 9.5.sp,
@@ -216,47 +228,6 @@ fun HomeScreen(state: AgentDeckState) {
                     color = Muted2
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun DemoNoticeCard(onDetails: () -> Unit, onDismiss: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = CardShape,
-        color = AdSurface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Line)
-    ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(BlueSoft),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.Info, contentDescription = null, modifier = Modifier.size(15.dp), tint = BlueInk)
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Local workspace", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Ink)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "Cloud analysis uses your API key. Execution, diffs, and checks are simulated until a host is connected. Imported GGUF models run on this phone.",
-                    style = AdType.Meta,
-                    lineHeight = 15.sp
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    "How this works",
-                    fontSize = 10.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = BlueInk,
-                    modifier = Modifier.clickable(onClick = onDetails)
-                )
-            }
-            AdIconButton(Icons.Outlined.Close, "Dismiss workspace notice", onDismiss, size = 30.dp)
         }
     }
 }
@@ -348,5 +319,33 @@ private fun StatsGrid(tasks: List<Task>, onFilter: (StatusFilter) -> Unit) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun ModeLauncherCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) BlueSoft else com.agentdeck.app.ui.theme.BlueSoft)
+            .border(1.dp, if (selected) BlueInk else Line, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp)
+    ) {
+        Text(
+            title,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (selected) BlueInk else Ink
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(subtitle, fontSize = 9.sp, lineHeight = 12.sp, color = Muted2)
     }
 }

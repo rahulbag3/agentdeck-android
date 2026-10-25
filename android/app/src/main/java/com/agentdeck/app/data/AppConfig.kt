@@ -14,6 +14,28 @@ class AppConfig(context: Context) {
         get() = prefs.getString(KEY_CLOUD_MODEL, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_CLOUD_MODEL, value).apply()
 
+    /** JSON array of saved cloud API profiles (no secrets; keys live in SecureStore). */
+    var cloudProfilesJson: String
+        get() = prefs.getString(KEY_CLOUD_PROFILES, "[]").orEmpty()
+        set(value) = prefs.edit().putString(KEY_CLOUD_PROFILES, value).apply()
+
+    /** Device shell (Termux over loopback SSH) for real toolchains. */
+    var sshEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SSH_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_SSH_ENABLED, value).apply()
+
+    var sshPort: Int
+        get() = prefs.getInt(KEY_SSH_PORT, 8022)
+        set(value) = prefs.edit().putInt(KEY_SSH_PORT, value).apply()
+
+    var sshUser: String
+        get() = prefs.getString(KEY_SSH_USER, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_SSH_USER, value).apply()
+
+    var activeCloudProfileId: String
+        get() = prefs.getString(KEY_ACTIVE_CLOUD_PROFILE, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_ACTIVE_CLOUD_PROFILE, value).apply()
+
     var githubRepo: String
         get() = prefs.getString(KEY_GITHUB_REPO, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_GITHUB_REPO, value).apply()
@@ -74,6 +96,11 @@ class AppConfig(context: Context) {
     companion object {
         const val DEFAULT_CLOUD_BASE_URL = "https://api.openai.com/v1"
         private const val KEY_CLOUD_BASE_URL = "cloud.base-url"
+        private const val KEY_CLOUD_PROFILES = "cloud.profiles"
+        private const val KEY_ACTIVE_CLOUD_PROFILE = "cloud.active-profile"
+        private const val KEY_SSH_ENABLED = "ssh.enabled"
+        private const val KEY_SSH_PORT = "ssh.port"
+        private const val KEY_SSH_USER = "ssh.user"
         private const val KEY_CLOUD_MODEL = "cloud.model"
         private const val KEY_GITHUB_REPO = "github.repo"
         private const val KEY_GITHUB_BRANCH = "github.branch"

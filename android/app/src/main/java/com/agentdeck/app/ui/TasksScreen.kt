@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.StatusFilter
 import com.agentdeck.app.data.TaskStatus
+import com.agentdeck.app.data.TaskKind
 import com.agentdeck.app.data.matchesFilter
 import com.agentdeck.app.ui.theme.Surface as AdSurface
 import com.agentdeck.app.ui.theme.BlueInk
@@ -46,10 +47,10 @@ import com.agentdeck.app.ui.theme.Muted2
 import com.agentdeck.app.ui.theme.Surface2
 
 @Composable
-fun TasksScreen(state: AgentDeckState) {
+fun TasksScreen(state: AgentDeckState, kind: TaskKind = TaskKind.CODING) {
     val project = state.activeProject
-    val all = state.activeTasks()
-    val filtered = state.filteredActiveTasks(state.taskQuery, state.statusFilter)
+    val all = state.tasksOfKind(kind)
+    val filtered = state.filteredTasksOfKind(kind, state.taskQuery, state.statusFilter)
 
     Column(Modifier.fillMaxSize().background(Surface2)) {
         Column(

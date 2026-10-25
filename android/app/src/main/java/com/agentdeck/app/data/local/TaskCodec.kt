@@ -8,6 +8,7 @@ import com.agentdeck.app.data.DeliveryState
 import com.agentdeck.app.data.DiffLine
 import com.agentdeck.app.data.DiffLineType
 import com.agentdeck.app.data.Failure
+import com.agentdeck.app.data.TaskKind
 import com.agentdeck.app.data.Message
 import com.agentdeck.app.data.MessageRole
 import com.agentdeck.app.data.ModelProvider
@@ -46,6 +47,8 @@ internal object TaskCodec {
         updatedAt = task.updatedAt,
         payloadJson = JSONObject().apply {
             put("analysisOnly", task.analysisOnly)
+            put("agentMode", task.agentMode)
+            put("kind", task.kind.name)
             put("repoContextRequested", task.repoContextRequested)
             put("cloudModel", task.cloudModel ?: JSONObject.NULL)
             put("activeRun", task.activeRun)
@@ -86,6 +89,8 @@ internal object TaskCodec {
             failure = payload.objectOrNull("failure")?.let(::failureFromJson),
             plan = payload.objectsOrNull("plan")?.mapNotNull(::planStepFromJson),
             analysisOnly = payload.optBoolean("analysisOnly", false),
+            agentMode = payload.optBoolean("agentMode", false),
+            kind = enumOrNull<TaskKind>(payload.optString("kind", "CODING")) ?: TaskKind.CODING,
             repoContextRequested = payload.optBoolean("repoContextRequested", false),
             repoContext = payload.objectOrNull("repoContext")?.let(::repoContextFromJson),
             cloudModel = payload.optStringOrNull("cloudModel"),

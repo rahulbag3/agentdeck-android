@@ -1,8 +1,13 @@
 # AgentDeck
 
-A native Android control center for coding agents. Create tasks, chat with an
-agent, inspect proposed changes, review checks, and approve or request changes —
-with cloud analysis over your own API key, straight from the phone.
+A native Android agent harness and coding workspace. Two modes: **Chat** — a
+general assistant with real web search, webpage retrieval, HTTP APIs, and
+persistent memory — and **Coding** — an agent that plans, reads and edits
+files in an on-device workspace, runs shell commands and git, and hands you a
+real diff to review. Both run on cloud models via your own API key or
+genuinely on-device via llama.cpp, stream replies, use reusable instructions,
+and ask your approval for consequential actions — straight from the phone, no
+host computer required.
 
 <table>
   <tr>
@@ -16,18 +21,43 @@ with cloud analysis over your own API key, straight from the phone.
 
 ## What it does
 
-- **Tasks and projects** — seeded workspace, per-project task lists, status
-  filters, search, and a task detail view with Chat / Changes / Checks tabs.
+- **Two modes** — Home opens on a **Chat / Coding** launcher. Chat: general
+  assistant with web search, page retrieval, HTTP APIs, and memory. Coding:
+  workspaces, file edits, shell commands, git, and review. Both support cloud
+  BYOK and on-device models, streaming, reusable instructions, and approvals.
+- **Tasks and projects** — per-project task lists, status filters, search, and
+  a task detail view with Chat / Changes / Checks tabs (chat tasks show the
+  Chat tab only). The workspace starts empty; nothing is seeded.
 - **Cloud BYOK analysis** — talk to any OpenAI-compatible endpoint with
   streaming replies, Markdown rendering, and per-message model attribution.
+  Save several APIs (OpenRouter, Groq, a local gateway…) and switch between
+  them; fetch each endpoint's model list and save model ids for one-tap reuse.
 - **Mid-conversation model switching** — change the cloud model or switch to a
-  ready local model without starting a new task.
+  local model without starting a new task. Selecting an unloaded local model
+  loads it automatically; only one local model stays in memory at a time.
 - **GitHub context** — attach a read-only snapshot (README, manifests, relevant
   sources) to a cloud analysis task. Public repos work without a token.
+- **Apply to GitHub** — cloud replies propose files in structured blocks; one
+  tap commits them to a branch and opens a pull request with your write token.
+  CI checks on the pull request report into the Checks tab.
+- **On-device agent** — with "Run as agent", a cloud model works directly in
+  the project's on-device workspace: it lists and reads real files, edits
+  them, runs Android system shell commands and git (JGit), and iterates on
+  errors. Reads run automatically; every file write, shell command, and git
+  commit requires your explicit approval. The workspace imports from GitHub
+  (codeload zip) and ends each run as a real diff for review. The shell is
+  Android's toybox — there is no Node/Python/Gradle toolchain on the device,
+  so test runs belong to CI or your computer.
+- **Real toolchains via Termux** — the on-device shell covers toybox
+  utilities natively; enable the Termux bridge in Settings and non-toybox
+  commands (`node`, `python`, `gradle`…) execute in Termux's sshd over
+  loopback SSH against the same shared workspace, so tests and toolchains
+  genuinely run on the phone. llama.cpp is pinned to upstream `b11876`
+  (current Hexagon skels for Snapdragon NPU).
 - **Real host execution (optional)** — connect the bundled host agent on your
-  computer and tasks run your own agent CLI in the project folder. Approvals,
-  streamed output, real `git` diffs, and checks come back to the phone. Without
-  a host, execution is clearly labelled as simulated.
+  computer to run your own agent CLI in the project folder, with approvals,
+  streamed output, real `git` diffs, and checks. The app is fully functional
+  without it; host tasks simply need a connected host.
 - **On-device inference** — import a GGUF model and chat offline with a bundled
   llama.cpp runtime. Token streaming runs on the phone; nothing is sent to a
   server.
@@ -48,11 +78,14 @@ with cloud analysis over your own API key, straight from the phone.
 - Host execution is gated by a per-host bearer token and an approval prompt on
   every run. The host never accepts arbitrary commands from the phone: the
   agent CLI and checks come from the host's own config file.
-- GitHub access is read-only (contents and metadata). The token is never sent to
-  the model.
+- GitHub reads are read-only (contents and metadata). Writes happen only when
+  you explicitly tap Apply, only with a token that has Contents + Pull requests
+  write access, and only as a branch and pull request — never a direct push to
+  your default branch. The token is never sent to the model.
 - Repository content is treated as untrusted data by the cloud system prompt.
-- Cloud analysis never edits files, runs commands, or claims to. File changes,
-  checks, and approvals belong to the (simulated) execution host.
+- Cloud analysis never edits files, runs commands, or claims to. It proposes
+  files; applying them is an explicit user action (a pull request on GitHub, or
+  a run on the optional execution host).
 - Android Auto Backup is disabled; the Room database stays on the device.
 
 ## Requirements
@@ -171,11 +204,10 @@ android/app/src/main/java/com/agentdeck/app/
 │   ├── LocalEngine.kt      JNI bridge to llama.cpp
 │   ├── LocalModelRegistry.kt  Imported GGUF catalogue
 │   ├── Models.kt           Tasks, messages, plans, checks, config
-│   ├── SeedData.kt         Demo workspace
 │   ├── CloudClient.kt      OpenAI-compatible SSE client + retries
 │   ├── CloudTurns.kt       Provider turn builder (history limits)
 │   ├── CloudErrorHandling.kt  Error mapping + NetworkMonitor
-│   ├── GitHubClient.kt     Read-only GitHub context fetcher
+│   ├── GitHubClient.kt     GitHub context fetcher + apply (branch, PR, CI)
 │   ├── SecureStore.kt      Keystore AES-GCM secret storage
 │   ├── Logger.kt           Logcat + Crashlytics
 │   └── local/              Room entities, DAO, codec, backup
@@ -200,7 +232,7 @@ tools/agentdeck-host/
 
 ## Tests
 
-63 JVM unit tests cover:
+95 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
@@ -209,6 +241,13 @@ tools/agentdeck-host/
 - Cloud error classification, retryability, and backoff
 - Workspace backup format, validation, and skipped rows
 - Host URL policy, endpoint building, and unified-diff parsing
+- Proposal block parsing (file fences, path validation, last-write-wins) and
+  line diffs for applied files
+- Task provider classification, including tasks whose local model row is
+  missing (transcript evidence fallback)
+- Cloud profile codec round-trips and OpenAI-style `/models` list parsing
+- Agent tool-protocol parsing, workspace path confinement, and unified-diff
+  file splitting
 - Imported local model catalogue encoding and tolerant decoding
 
 The host agent has 9 protocol tests (auth, approval, denial, inspection mode,
@@ -247,8 +286,11 @@ to the default branch.
 
 ## Known limitations
 
-- Execution is real only when a host agent is connected and the run is
-  approved. Without a host, diffs and checks are simulated and labelled as such.
+- Execution without a host means GitHub applies: a branch, a pull request, and
+  whatever CI the repository already runs. Applying proposals needs a GitHub
+  fine-grained token with Contents + Pull requests write access; without a
+  write token the app stays read-only. Host-agent tasks additionally require a
+  connected, approved host.
 - On-device quality depends entirely on the GGUF you import. Small or base
   models produce limited text; no model ships with the app.
 - Accelerated inference is only in the optional Snapdragon APK and depends on

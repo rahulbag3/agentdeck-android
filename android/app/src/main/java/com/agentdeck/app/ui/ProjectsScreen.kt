@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,6 +31,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +56,7 @@ import com.agentdeck.app.ui.theme.Ink
 import com.agentdeck.app.ui.theme.Line
 import com.agentdeck.app.ui.theme.Muted
 import com.agentdeck.app.ui.theme.Muted2
+import com.agentdeck.app.ui.theme.RedInk
 import com.agentdeck.app.ui.theme.Surface2
 
 @Composable
@@ -103,23 +109,107 @@ fun ProjectsScreen(state: AgentDeckState) {
                 )
             }
             item {
-                Row(
+                CreateProjectCard(state)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreateProjectCard(state: AgentDeckState) {
+    var expanded by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    var repo by remember { mutableStateOf("") }
+    var branch by remember { mutableStateOf("") }
+    var error by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+
+    androidx.compose.material3.Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = AdSurface,
+        border = BorderStroke(1.dp, Line)
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(BlueSoft)
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(BlueSoft),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(16.dp), tint = BlueInk)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "Local models run on this phone. Projects still use the execution host for file changes and checks.",
-                        fontSize = 10.sp,
-                        lineHeight = 14.sp,
-                        color = BlueInk
-                    )
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = BlueInk)
                 }
+                Spacer(Modifier.width(9.dp))
+                Text("New project", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (expanded) "Hide" else "Create",
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = BlueInk,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .clickable { expanded = !expanded }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+            if (expanded) {
+                Spacer(Modifier.height(10.dp))
+                AdTextField(
+                    value = name,
+                    onValueChange = { name = it; error = null },
+                    placeholder = "Project name",
+                    minHeight = 40.dp,
+                    singleLine = true
+                )
+                Spacer(Modifier.height(7.dp))
+                AdTextField(
+                    value = repo,
+                    onValueChange = { repo = it; error = null },
+                    placeholder = "owner/repo (optional · for agent import)",
+                    minHeight = 40.dp,
+                    mono = true,
+                    singleLine = true
+                )
+                Spacer(Modifier.height(7.dp))
+                AdTextField(
+                    value = branch,
+                    onValueChange = { branch = it; error = null },
+                    placeholder = "Default branch (main)",
+                    minHeight = 40.dp,
+                    mono = true,
+                    singleLine = true
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(error!!, fontSize = 10.sp, color = RedInk)
+                }
+                Spacer(Modifier.height(10.dp))
+                AdButton(
+                    "Create project",
+                    onClick = {
+                        val failure = state.createProject(name, repo, branch)
+                        if (failure == null) {
+                            name = ""
+                            repo = ""
+                            branch = ""
+                            expanded = false
+                        } else {
+                            error = failure
+                        }
+                    },
+                    fillWidth = true,
+                    small = true,
+                    enabled = name.isNotBlank()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Agent tasks read and edit files in this project's on-device workspace. With a repo set, Settings → Agent workspace can import it from GitHub.",
+                    fontSize = 9.sp,
+                    lineHeight = 13.sp,
+                    color = Muted2
+                )
             }
         }
     }
@@ -164,7 +254,7 @@ private fun HostCard(state: AgentDeckState, online: Boolean) {
         Spacer(Modifier.height(10.dp))
         Text(
             if (online) {
-                "Last seen ${relativeTime(host.lastSeen)}. Host models and all task execution use this simulated host."
+                "Last seen ${relativeTime(host.lastSeen)}. Tasks run your agent CLI on this host."
             } else {
                 "Host tasks are stopped and can be retried. On-device chat remains available."
             },
@@ -178,7 +268,7 @@ private fun HostCard(state: AgentDeckState, online: Boolean) {
                 AdButton("Reconnect host", onClick = state::reconnectHost, small = true)
             }
             Spacer(Modifier.width(10.dp))
-            Text("Host state is simulated", style = AdType.Tiny)
+            Text(host.transport, style = AdType.Tiny)
         }
     }
 }

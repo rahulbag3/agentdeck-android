@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Memory
@@ -61,6 +62,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.AppConfig
+import com.agentdeck.app.data.CloudClient
+import com.agentdeck.app.data.CloudProfile
 import com.agentdeck.app.data.ConfirmKind
 import com.agentdeck.app.data.ConnectionTest
 import com.agentdeck.app.data.LocalEngine
@@ -114,8 +117,9 @@ fun AgentDeckSheetHost(state: AgentDeckState) {
             when (sheet) {
                 is Sheet.Projects -> ProjectsSheet(state)
                 is Sheet.Models -> ModelsSheet(state)
-                is Sheet.DemoInfo -> DemoInfoSheet(state)
+                is Sheet.About -> AboutSheet(state)
                 is Sheet.CloudSetup -> CloudSetupSheet(state)
+                is Sheet.Instructions -> InstructionsSheet(state)
                 is Sheet.GitHubSetup -> GitHubSetupSheet(state)
                 is Sheet.HostSetup -> HostSetupSheet(state)
                 is Sheet.RepoContextSheet -> RepoContextSheet(state, sheet.taskId)
@@ -229,12 +233,12 @@ private fun ModelsSheet(state: AgentDeckState) {
     val draft = state.newTaskDraft
     SheetHeader(
         title = "Choose a model",
-        subtitle = "Cloud and local chat work without the host. Execution stays with the host.",
+        subtitle = "Cloud analysis, on-device chat, and GitHub applies run from this phone.",
         onClose = { state.showSheet(null) }
     )
     Spacer(Modifier.height(14.dp))
     SectionRow("CLOUD API") {
-        if (state.cloudConfig.configured) CloudChip() else PreviewTag("BYOK")
+        if (state.cloudConfig.configured) CloudChip() else PlaceholderTag("BYOK")
     }
     Spacer(Modifier.height(7.dp))
     state.cloudModels().forEach { model ->
@@ -263,7 +267,7 @@ private fun ModelsSheet(state: AgentDeckState) {
     }
     Spacer(Modifier.height(12.dp))
     SectionRow("ON THIS DEVICE") {
-        if (LocalEngine.available) AdTag("LLAMA.CPP", GreenSoft, GreenInk) else PreviewTag()
+        if (LocalEngine.available) AdTag("LLAMA.CPP", GreenSoft, GreenInk) else PlaceholderTag("No engine")
     }
     Spacer(Modifier.height(7.dp))
     val importedDraftIds = state.importedModels.map { it.id }.toSet()
@@ -276,25 +280,27 @@ private fun ModelsSheet(state: AgentDeckState) {
         Spacer(Modifier.height(6.dp))
     }
     Text(
-        "Imported GGUF models generate on this phone. Unloaded models can be loaded in Settings. Sample entries are previews.",
+        "Imported GGUF models generate on this phone. Unloaded models can be loaded in Settings.",
         fontSize = 9.5.sp,
         lineHeight = 14.sp,
         color = Muted2
     )
-    Spacer(Modifier.height(10.dp))
-    SectionRow("HOST MODELS") {}
-    Spacer(Modifier.height(7.dp))
-    state.hostModels().forEach { model ->
-        ModelSheetRow(
-            model = model,
-            selected = draft.modelId == model.id,
-            onSelect = { state.selectDraftModel(model.id) }
-        )
-        Spacer(Modifier.height(6.dp))
+    if (state.hostModels().isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        SectionRow("HOST MODELS · OPTIONAL") {}
+        Spacer(Modifier.height(7.dp))
+        state.hostModels().forEach { model ->
+            ModelSheetRow(
+                model = model,
+                selected = draft.modelId == model.id,
+                onSelect = { state.selectDraftModel(model.id) }
+            )
+            Spacer(Modifier.height(6.dp))
+        }
     }
     Spacer(Modifier.height(8.dp))
     Text(
-        "Cloud replies are real when configured; nothing is written, run, or merged. On-device inference is still simulated. Execution uses the host.",
+        "Cloud replies go straight to your endpoint. Proposed files apply to GitHub as a branch and pull request. On-device models run offline on this phone.",
         fontSize = 9.5.sp,
         lineHeight = 14.sp,
         color = Muted2
@@ -331,11 +337,12 @@ private fun ModelSheetRow(
     model: ModelOption,
     selected: Boolean,
     onSelect: () -> Unit,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    requireReady: Boolean = true
 ) {
     val local = model.isLocal
     val cloud = model.isCloud
-    val selectable = model.isReady && enabled
+    val selectable = enabled && (model.isReady || !requireReady)
     val tone = when {
         local -> modelStateTone(model.localState)
         cloud && selectable -> AdTone(VioletSoft, com.agentdeck.app.ui.theme.VioletInk)
@@ -439,56 +446,54 @@ private fun ModelSheetRow(
 }
 
 @Composable
-private fun DemoInfoSheet(state: AgentDeckState) {
+private fun AboutSheet(state: AgentDeckState) {
     SheetHeader(
         title = "How this works",
-        subtitle = "What is real, and what is simulated",
+        subtitle = "Where your work runs",
         onClose = { state.showSheet(null) }
     )
     Spacer(Modifier.height(14.dp))
-    DemoPoint(Icons.Outlined.Cloud, VioletSoft, com.agentdeck.app.ui.theme.VioletInk, "Cloud BYOK", "When you connect an API, replies are real and go straight to your endpoint. The model can read a GitHub snapshot and propose changes, but cannot write or run anything.")
+    InfoPoint(Icons.Outlined.Cloud, VioletSoft, com.agentdeck.app.ui.theme.VioletInk, "Cloud BYOK", "When you connect an API, replies are real and go straight to your endpoint. The model can read a GitHub snapshot and propose changes, but cannot write or run anything.")
     Spacer(Modifier.height(12.dp))
-    DemoPoint(Icons.Outlined.Code, GreenSoft, GreenInk, "GitHub context", "Read-only snapshots of selected files. Public repos work without a token; private repos can use a read-only token stored on this phone.")
+    InfoPoint(Icons.Outlined.Code, GreenSoft, GreenInk, "GitHub context", "Read-only snapshots of selected files. Public repos work without a token; private repos need a token stored on this phone.")
     Spacer(Modifier.height(12.dp))
     val hostLive = state.hostConfig.configured && state.data.host.connected
-    DemoPoint(
+    InfoPoint(
         Icons.Outlined.Dns,
         BlueSoft,
         BlueInk,
-        if (hostLive) "Live host" else "Simulated host",
+        "Apply to GitHub",
+        "When a cloud reply proposes files, one tap commits them to a branch and opens a pull request using your token. CI checks on that pull request appear in the Checks tab."
+    )
+    Spacer(Modifier.height(12.dp))
+    InfoPoint(
+        Icons.Outlined.Terminal,
+        GraySoft,
+        GrayInk,
+        if (hostLive) "Host agent · connected" else "Host agent · optional",
         if (hostLive) {
-            "Tasks run your configured agent CLI on ${state.data.host.name}. Every run needs your approval, and output, diffs, and checks stream back."
+            "Tasks can also run your configured agent CLI on ${state.data.host.name}. Every run needs your approval, and output, diffs, and checks stream back."
         } else {
-            "No host is connected, so host replies, diffs, and checks are generated locally. Connect the host agent in Settings for real execution."
+            "Optionally connect the host agent to run your own agent CLI on your computer. The app is fully functional without it."
         }
     )
     Spacer(Modifier.height(12.dp))
-    DemoPoint(Icons.Outlined.PhoneAndroid, GreenSoft, GreenInk, "On-device preview", "Local model states and replies are simulated. An on-device inference engine is not bundled yet.")
+    InfoPoint(Icons.Outlined.PhoneAndroid, GreenSoft, GreenInk, "On-device inference", "Imported GGUF models generate entirely on this phone with the bundled llama.cpp runtime. Nothing is sent to a server.")
     Spacer(Modifier.height(12.dp))
-    DemoPoint(Icons.Outlined.Shield, AmberSoft, AmberInk, "Approvals are local", "Approving records a decision in the workspace on this phone. Nothing is merged, pushed, or deployed.")
+    InfoPoint(Icons.Outlined.Shield, AmberSoft, AmberInk, "Approvals are local", "Approving records a decision in the workspace on this phone. Nothing is merged, pushed, or deployed.")
     Spacer(Modifier.height(12.dp))
     Text("Tasks and settings are stored on this phone. Backups never include API keys or tokens.", style = AdType.Tiny)
     Spacer(Modifier.height(14.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        AdButton(
-            "Close",
-            onClick = { state.showSheet(null) },
-            modifier = Modifier.weight(1f),
-            kind = AdButtonKind.OUTLINE
-        )
-        AdButton(
-            "Dismiss notice",
-            onClick = {
-                state.dismissDemoNotice()
-                state.showSheet(null)
-            },
-            modifier = Modifier.weight(1f)
-        )
-    }
+    AdButton(
+        "Close",
+        onClick = { state.showSheet(null) },
+        modifier = Modifier.fillMaxWidth(),
+        kind = AdButtonKind.OUTLINE
+    )
 }
 
 @Composable
-private fun DemoPoint(icon: ImageVector, bg: Color, fg: Color, title: String, text: String) {
+private fun InfoPoint(icon: ImageVector, bg: Color, fg: Color, title: String, text: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Box(
             modifier = Modifier
@@ -512,7 +517,8 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
     val task = state.task(taskId) ?: return
     val busy = state.isTaskBusy(taskId)
     val cloudActive = state.isCloudTask(task)
-    val configured = state.cloudConfig.configured
+    val configured = state.cloudConfig.endpointReady
+    val profile = state.activeCloudProfile()
     var cloudModel by remember(task.id) {
         mutableStateOf(task.cloudModel?.takeIf { it.isNotBlank() } ?: state.cloudConfig.model)
     }
@@ -521,91 +527,82 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
 
     SheetHeader(
         title = "Change model",
-        subtitle = "Applies to the next messages. Earlier replies keep the model that produced them.",
+        subtitle = "Applies to the next messages. Earlier replies keep their model.",
         onClose = { state.showSheet(null) }
     )
     if (busy) {
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         InfoBanner(
             title = "Reply in progress",
-            text = "Wait for the current request to finish before changing models.",
+            text = "Wait for the current reply to finish.",
             kind = BannerKind.WARNING
         )
     }
-    Spacer(Modifier.height(14.dp))
-    SectionRow("CLOUD API") {
-        if (cloudActive) CloudChip("Current") else if (configured) CloudChip() else PreviewTag("BYOK")
+    Spacer(Modifier.height(10.dp))
+    SectionRow("CLOUD · ${profile?.label ?: "API"}") {
+        if (cloudActive) CloudChip("Current") else if (configured) CloudChip() else PlaceholderTag("BYOK")
     }
-    Spacer(Modifier.height(7.dp))
     if (configured) {
-        Text(
-            "${com.agentdeck.app.data.CloudClient.providerLabel(state.cloudConfig.baseUrl)} · same endpoint and key as Settings",
-            fontSize = 9.5.sp,
-            lineHeight = 13.sp,
-            color = Muted2
-        )
-        Spacer(Modifier.height(8.dp))
-        SheetFormLabel("Model for this conversation")
-        AdTextField(
-            value = cloudModel,
-            onValueChange = { cloudModel = it; error = null },
-            placeholder = "gpt-4.1-mini",
-            mono = true,
-            singleLine = true
-        )
-        Spacer(Modifier.height(8.dp))
-        AdButton(
-            if (cloudActive && cloudModel.trim() == currentCloudName) "Using this model" else "Switch to cloud model",
-            onClick = {
-                val failure = state.switchTaskToCloud(taskId, cloudModel)
-                if (failure == null) state.showSheet(null) else error = failure
-            },
-            kind = AdButtonKind.PRIMARY,
-            fillWidth = true,
-            enabled = !busy && cloudModel.isNotBlank() &&
-                !(cloudActive && cloudModel.trim() == currentCloudName)
-        )
         Spacer(Modifier.height(6.dp))
-        Text(
-            "Read-only analysis. The endpoint and key stay the same; nothing is changed or run.",
-            fontSize = 9.5.sp,
-            lineHeight = 14.sp,
-            color = Muted2
-        )
-        if (task.repoContext == null) {
-            Spacer(Modifier.height(5.dp))
-            Text(
-                "No repository snapshot is attached to this task. Start a new task to include GitHub context, or continue without it.",
-                fontSize = 9.5.sp,
-                lineHeight = 14.sp,
-                color = Muted2
+        profile?.models.orEmpty().forEach { modelId ->
+            CompactModelRow(
+                name = modelId,
+                selected = cloudActive && modelId == currentCloudName,
+                enabled = !busy,
+                onClick = {
+                    val failure = state.switchTaskToCloud(taskId, modelId)
+                    if (failure == null) state.showSheet(null) else error = failure
+                }
             )
         }
-    } else {
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AdTextField(
+                value = cloudModel,
+                onValueChange = { cloudModel = it; error = null },
+                placeholder = "model id · saved automatically",
+                modifier = Modifier.weight(1f),
+                minHeight = 38.dp,
+                mono = true,
+                singleLine = true
+            )
+            AdButton(
+                "Use",
+                onClick = {
+                    val failure = state.switchTaskToCloud(taskId, cloudModel)
+                    if (failure == null) state.showSheet(null) else error = failure
+                },
+                small = true,
+                enabled = !busy && cloudModel.isNotBlank() &&
+                    !(cloudActive && cloudModel.trim() == currentCloudName)
+            )
+        }
+        Spacer(Modifier.height(2.dp))
         Text(
-            "Connect a cloud API to switch this conversation to a cloud model.",
-            fontSize = 10.5.sp,
-            lineHeight = 15.sp,
-            color = Muted
+            "Manage APIs",
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .clickable { state.openCloudSetup() }
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = BlueInk
         )
-        Spacer(Modifier.height(8.dp))
-        AdButton(
-            "Set up cloud API",
-            onClick = state::openCloudSetup,
-            kind = AdButtonKind.OUTLINE,
-            fillWidth = true,
-            small = true
-        )
+    } else {
+        Spacer(Modifier.height(6.dp))
+        Text("Connect a cloud API to switch to a cloud model.", fontSize = 10.sp, lineHeight = 14.sp, color = Muted)
+        Spacer(Modifier.height(6.dp))
+        AdButton("Set up cloud API", onClick = state::openCloudSetup, kind = AdButtonKind.OUTLINE, small = true)
     }
     if (error != null) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Text(error!!, fontSize = 10.5.sp, lineHeight = 15.sp, color = RedInk)
     }
-    Spacer(Modifier.height(14.dp))
+    Spacer(Modifier.height(10.dp))
     SectionRow("ON THIS DEVICE") {
-        if (LocalEngine.available) AdTag("LLAMA.CPP", GreenSoft, GreenInk) else PreviewTag()
+        if (LocalEngine.available) AdTag("LLAMA.CPP", GreenSoft, GreenInk) else PlaceholderTag("No engine")
     }
-    Spacer(Modifier.height(7.dp))
+    Spacer(Modifier.height(6.dp))
     val importedSwitchIds = state.importedModels.map { it.id }.toSet()
     state.localModels().sortedByDescending { it.id in importedSwitchIds }.forEach { localModel ->
         ModelSheetRow(
@@ -615,25 +612,18 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
                 val failure = state.switchTaskToLocal(taskId, localModel.id)
                 if (failure == null) state.showSheet(null) else error = failure
             },
-            enabled = !busy
+            enabled = !busy,
+            requireReady = false
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(5.dp))
     }
-    Spacer(Modifier.height(2.dp))
     Text(
-        "Imported GGUF models run offline on this phone and do not read the GitHub snapshot. Sample entries are previews. Switching back to cloud keeps the snapshot attached to this task.",
-        fontSize = 9.5.sp,
-        lineHeight = 14.sp,
+        "Selecting an unloaded model loads it · one model in memory at a time.",
+        fontSize = 9.sp,
+        lineHeight = 13.sp,
         color = Muted2
     )
-    Spacer(Modifier.height(12.dp))
-    Text(
-        "Host execution models stay with task creation. Start a new task to run on ${state.data.host.name}.",
-        fontSize = 9.5.sp,
-        lineHeight = 14.sp,
-        color = Muted2
-    )
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(8.dp))
     AdButton(
         "Done",
         onClick = { state.showSheet(null) },
@@ -642,29 +632,231 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
     )
 }
 
+/** One-line selectable model id for the conversation switcher. */
+@Composable
+private fun CompactModelRow(name: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) androidx.compose.ui.graphics.Color(0xFFEFF3FC) else androidx.compose.ui.graphics.Color.Transparent)
+            .clickable(enabled = enabled && !selected, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            name,
+            fontFamily = Mono,
+            fontSize = 10.sp,
+            color = if (selected) Ink else InkSoft,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (selected) {
+            Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(13.dp), tint = BlueInk)
+        }
+    }
+}
+
 @Composable
 private fun CloudSetupSheet(state: AgentDeckState) {
-    val cfg = state.cloudConfig
-    var baseUrl by remember { mutableStateOf(cfg.baseUrl.ifBlank { AppConfig.DEFAULT_CLOUD_BASE_URL }) }
-    var model by remember { mutableStateOf(cfg.model) }
+    var editingId by remember { mutableStateOf<String?>(null) }
+    when (editingId) {
+        null -> CloudProfileList(
+            state,
+            onAdd = { editingId = "new" },
+            onEdit = { editingId = it }
+        )
+        "new" -> CloudProfileEditor(state, profileId = null, onBack = { editingId = null })
+        else -> CloudProfileEditor(state, profileId = editingId, onBack = { editingId = null })
+    }
+}
+
+@Composable
+private fun CloudProfileList(state: AgentDeckState, onAdd: () -> Unit, onEdit: (String) -> Unit) {
+    var expandedId by remember { mutableStateOf<String?>(null) }
+    SheetHeader(
+        title = "Cloud APIs",
+        subtitle = "Multiple OpenAI-compatible endpoints. Requests go directly from this phone.",
+        onClose = { state.showSheet(null) }
+    )
+    Spacer(Modifier.height(10.dp))
+    if (state.cloudProfiles.isEmpty()) {
+        Text(
+            "No cloud APIs yet. Add an endpoint and key to analyse code, review, and propose changes.",
+            fontSize = 10.5.sp,
+            lineHeight = 15.sp,
+            color = Muted
+        )
+        Spacer(Modifier.height(12.dp))
+    }
+    state.cloudProfiles.forEach { profile ->
+        val active = profile.id == state.activeCloudProfileId
+        AdCard {
+            Column(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(VioletSoft),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Outlined.Cloud, contentDescription = null, modifier = Modifier.size(15.dp), tint = com.agentdeck.app.ui.theme.VioletInk)
+                    }
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            profile.label + if (active) " · active" else "",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Ink
+                        )
+                        Text(
+                            "${profile.baseUrl} · ${profile.models.size} model${if (profile.models.size == 1) "" else "s"}",
+                            style = AdType.Tiny,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (!active) {
+                        AdButton("Use", onClick = { state.setActiveCloudProfile(profile.id) }, kind = AdButtonKind.PRIMARY, small = true)
+                    }
+                    AdButton(
+                        if (expandedId == profile.id) "Close models" else "Models",
+                        onClick = { expandedId = if (expandedId == profile.id) null else profile.id },
+                        kind = AdButtonKind.OUTLINE,
+                        small = true
+                    )
+                    AdButton("Edit", onClick = { onEdit(profile.id) }, kind = AdButtonKind.OUTLINE, small = true)
+                    AdButton("Remove", onClick = { state.removeCloudProfile(profile.id) }, kind = AdButtonKind.DANGER, small = true)
+                }
+            }
+        }
+        if (expandedId == profile.id) {
+            Spacer(Modifier.height(6.dp))
+            CloudModelsManager(state, profile)
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    AdButton("Add cloud API", onClick = onAdd, fillWidth = true)
+    Spacer(Modifier.height(10.dp))
+    Text(
+        "Keys are encrypted with Android Keystore and never written to tasks or logs. Prompts and selected repository files go to the endpoint you use.",
+        fontSize = 9.5.sp,
+        lineHeight = 14.sp,
+        color = Muted2
+    )
+    Spacer(Modifier.height(14.dp))
+}
+
+@Composable
+private fun CloudModelsManager(state: AgentDeckState, profile: CloudProfile) {
+    AdCard {
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Models on ${profile.label}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Spacer(Modifier.weight(1f))
+                AdButton(
+                    if (state.cloudModelsFetching) "Fetching…" else "Fetch from API",
+                    onClick = { state.fetchCloudModels(profile.id) },
+                    kind = AdButtonKind.OUTLINE,
+                    small = true,
+                    enabled = !state.cloudModelsFetching
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            if (profile.models.isEmpty()) {
+                Text("No saved models. Fetch lists what the endpoint offers; tap to save.", fontSize = 9.5.sp, lineHeight = 13.sp, color = Muted2)
+            } else {
+                profile.models.forEach { modelId ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            modelId,
+                            fontFamily = Mono,
+                            fontSize = 10.sp,
+                            color = if (modelId == profile.lastModel) Ink else InkSoft,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (modelId == profile.lastModel) {
+                            Text("default", fontSize = 8.5.sp, color = Muted2, modifier = Modifier.padding(horizontal = 6.dp))
+                        }
+                        Text(
+                            "Remove",
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { state.removeCloudModel(profile.id, modelId) }
+                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = RedInk
+                        )
+                    }
+                }
+            }
+            val fetched = state.fetchedCloudModels
+            if (fetched.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("Available on this endpoint · tap to save", fontSize = 9.sp, color = Muted2)
+                Spacer(Modifier.height(2.dp))
+                fetched.take(40).forEach { modelId ->
+                    val saved = modelId in profile.models
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            modelId,
+                            fontFamily = Mono,
+                            fontSize = 9.5.sp,
+                            color = if (saved) Muted2 else Ink,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            if (saved) "Saved" else "Save",
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(enabled = !saved) { state.saveCloudModel(profile.id, modelId) }
+                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (saved) Muted2 else BlueInk
+                        )
+                    }
+                }
+                if (fetched.size > 40) {
+                    Text("+${fetched.size - 40} more · save by typing the id in a conversation", fontSize = 8.5.sp, color = Muted2)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloudProfileEditor(state: AgentDeckState, profileId: String?, onBack: () -> Unit) {
+    val existing = state.cloudProfiles.firstOrNull { it.id == profileId }
+    var baseUrl by remember { mutableStateOf(existing?.baseUrl ?: AppConfig.DEFAULT_CLOUD_BASE_URL) }
+    var label by remember { mutableStateOf(existing?.label.orEmpty()) }
     var apiKey by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
     SheetHeader(
-        title = "Cloud API",
-        subtitle = "Bring your own OpenAI-compatible endpoint. Requests go directly from this phone.",
-        onClose = { state.showSheet(null) }
+        title = if (existing == null) "Add cloud API" else "Edit ${existing.label}",
+        subtitle = "Bring your own OpenAI-compatible endpoint.",
+        onClose = onBack
     )
-    Spacer(Modifier.height(12.dp))
-    if (cfg.keySaved) {
-        InfoBanner(
-            title = "Key saved on this device",
-            text = "Encrypted with Android Keystore. Enter a new key only when rotating it.",
-            kind = BannerKind.DONE
-        )
-        Spacer(Modifier.height(12.dp))
-    }
-
+    Spacer(Modifier.height(10.dp))
     SheetFormLabel("Base URL")
     AdTextField(
         value = baseUrl,
@@ -673,75 +865,49 @@ private fun CloudSetupSheet(state: AgentDeckState) {
         mono = true,
         singleLine = true
     )
-    Spacer(Modifier.height(11.dp))
-    SheetFormLabel("Model")
+    Spacer(Modifier.height(9.dp))
+    SheetFormLabel("Name", optional = true)
     AdTextField(
-        value = model,
-        onValueChange = { model = it; error = null },
-        placeholder = "gpt-4.1-mini",
-        mono = true,
+        value = label,
+        onValueChange = { label = it; error = null },
+        placeholder = CloudClient.providerLabel(baseUrl.ifBlank { AppConfig.DEFAULT_CLOUD_BASE_URL }),
         singleLine = true
     )
-    Spacer(Modifier.height(11.dp))
+    Spacer(Modifier.height(9.dp))
     SheetFormLabel("API key")
     AdTextField(
         value = apiKey,
         onValueChange = { apiKey = it; error = null },
-        placeholder = if (cfg.keySaved) "Saved · enter a new key to replace" else "sk-…",
+        placeholder = if (existing?.keySaved == true) "Saved · enter a new key to replace" else "sk-…",
         secret = true,
         singleLine = true
     )
-    Spacer(Modifier.height(8.dp))
-    TestFeedback(state.cloudTest)
     if (error != null) {
         Spacer(Modifier.height(8.dp))
         Text(error!!, fontSize = 10.5.sp, lineHeight = 15.sp, color = RedInk)
     }
+    Spacer(Modifier.height(12.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AdButton("Cancel", onClick = onBack, modifier = Modifier.weight(1f), kind = AdButtonKind.OUTLINE)
+        AdButton(
+            "Save",
+            onClick = {
+                val failure = state.saveCloudProfile(profileId, baseUrl, label, apiKey)
+                error = failure
+                if (failure == null) onBack()
+            },
+            modifier = Modifier.weight(1f),
+            enabled = baseUrl.isNotBlank() && (apiKey.isNotBlank() || existing?.keySaved == true)
+        )
+    }
     Spacer(Modifier.height(10.dp))
     Text(
-        "The key is encrypted with Android Keystore and never written to tasks or logs. Your prompts and selected repository files are sent to this endpoint, and requests use your provider quota. Nothing is written to your repo.",
+        "Save first, then use “Models · Fetch from API” to list and save the models this endpoint offers.",
         fontSize = 9.5.sp,
         lineHeight = 14.sp,
         color = Muted2
     )
-    Spacer(Modifier.height(13.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        AdButton(
-            if (state.cloudTest is ConnectionTest.Testing) "Testing…" else "Test",
-            onClick = {
-                error = null
-                state.testCloudConnection(baseUrl, model, apiKey)
-            },
-            modifier = Modifier.weight(1f),
-            kind = AdButtonKind.OUTLINE,
-            enabled = state.cloudTest !is ConnectionTest.Testing
-        )
-        AdButton(
-            "Save",
-            onClick = {
-                val failure = state.saveCloudConfig(baseUrl, model, apiKey)
-                error = failure
-                if (failure == null) apiKey = ""
-            },
-            modifier = Modifier.weight(1f),
-            enabled = baseUrl.isNotBlank() && model.isNotBlank() && (apiKey.isNotBlank() || cfg.keySaved)
-        )
-    }
-    if (cfg.configured) {
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { state.showSheet(Sheet.Confirm(ConfirmKind.REMOVE_CLOUD)) }
-                .padding(vertical = 8.dp, horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(14.dp), tint = RedInk)
-            Spacer(Modifier.width(6.dp))
-            Text("Remove cloud API from this device", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = RedInk)
-        }
-    }
+    Spacer(Modifier.height(14.dp))
 }
 
 @Composable
@@ -867,7 +1033,7 @@ private fun GitHubSetupSheet(state: AgentDeckState) {
 
     SheetHeader(
         title = "GitHub context",
-        subtitle = "Read-only repository snapshots for code analysis. Nothing is written to GitHub.",
+        subtitle = "Repository snapshots for analysis, and applies when you add a write token.",
         onClose = { state.showSheet(null) }
     )
     Spacer(Modifier.height(12.dp))
@@ -914,7 +1080,7 @@ private fun GitHubSetupSheet(state: AgentDeckState) {
     }
     Spacer(Modifier.height(10.dp))
     Text(
-        "Public repositories work without a token, but unauthenticated requests are limited to 60 per hour. For private repositories or higher limits, use a fine-grained token with Contents: Read and Metadata: Read only. The token stays on this phone and is never sent to the cloud model.",
+        "Public repositories work without a token, but unauthenticated requests are limited to 60 per hour. For private repositories or higher limits, use a fine-grained token. A read-only token (Contents: Read) fetches context; a write token (Contents + Pull requests: Read and write) also lets you apply proposals as branches and pull requests — applies happen only when you tap Apply. The token stays on this phone and is never sent to the cloud model.",
         fontSize = 9.5.sp,
         lineHeight = 14.sp,
         color = Muted2
@@ -1160,7 +1326,7 @@ private fun ApproveSheet(state: AgentDeckState, taskId: String) {
     }
     Spacer(Modifier.height(10.dp))
     Text(
-        "Approving does not merge, push, or deploy. It marks the work as accepted in this demo and unlocks a completed task record.",
+        "Approving does not merge, push, or deploy. It records your acceptance in the workspace and completes the task.",
         fontSize = 11.5.sp,
         lineHeight = 17.sp,
         color = Muted
@@ -1290,11 +1456,11 @@ private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
         ConfirmKind.REMOVE_HOST -> "Remove this host?"
     }
     val body = when (kind) {
-        ConfirmKind.DISCONNECT -> "Running host tasks will stop with a retryable error. Messages cannot be sent until you reconnect. Execution is simulated on this device."
-        ConfirmKind.RESET -> "This deletes every local task, message, change, check result, decision, and model state, then restores the sample workspace. It cannot be undone. Cloud and GitHub settings are kept."
+        ConfirmKind.DISCONNECT -> "Running host tasks will stop with a retryable error. Messages cannot be sent until you reconnect."
+        ConfirmKind.RESET -> "This deletes every local task, message, change, check result, decision, and model state, then leaves the workspace empty. It cannot be undone. Cloud and GitHub settings are kept."
         ConfirmKind.REMOVE_CLOUD -> "This deletes the saved API key and endpoint settings from this phone. Existing cloud tasks keep their messages but cannot continue until you connect a cloud API again."
         ConfirmKind.REMOVE_GITHUB -> "This deletes the saved repository settings and token. Existing tasks keep the context snapshot they already fetched."
-        ConfirmKind.REMOVE_HOST -> "This deletes the saved host URL and token. Host tasks fall back to simulated execution until you connect a host again."
+        ConfirmKind.REMOVE_HOST -> "This deletes the saved host URL and token. Host tasks cannot run until you connect a host again."
     }
     val confirmLabel = when (kind) {
         ConfirmKind.DISCONNECT -> "Disconnect"
@@ -1322,7 +1488,7 @@ private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
             onClick = {
                 when (kind) {
                     ConfirmKind.DISCONNECT -> state.disconnectHost()
-                    ConfirmKind.RESET -> state.resetDemo()
+                    ConfirmKind.RESET -> state.clearWorkspace()
                     ConfirmKind.REMOVE_CLOUD -> state.removeCloudConfig()
                     ConfirmKind.REMOVE_GITHUB -> state.removeGitHubConfig()
                     ConfirmKind.REMOVE_HOST -> state.removeHostConfig()
@@ -1332,4 +1498,85 @@ private fun ConfirmSheet(state: AgentDeckState, kind: ConfirmKind) {
             kind = AdButtonKind.DANGER
         )
     }
+}
+
+@Composable
+private fun InstructionsSheet(state: AgentDeckState) {
+    var name by remember { mutableStateOf("") }
+    var body by remember { mutableStateOf("") }
+    val items = state.instructions.all()
+    val memories = state.memoryStore.all()
+
+    SheetHeader(
+        title = "Instructions & memory",
+        subtitle = "Reusable prompt sets, and what the agent remembers.",
+        onClose = { state.showSheet(null) }
+    )
+    Spacer(Modifier.height(10.dp))
+    SheetFormLabel("New instruction")
+    AdTextField(
+        value = name,
+        onValueChange = { name = it },
+        placeholder = "Name (e.g. Code review style)",
+        minHeight = 38.dp,
+        singleLine = true
+    )
+    Spacer(Modifier.height(6.dp))
+    AdTextField(
+        value = body,
+        onValueChange = { body = it },
+        placeholder = "Instructions the agent always follows…",
+        minHeight = 64.dp
+    )
+    Spacer(Modifier.height(8.dp))
+    AdButton(
+        "Save instruction",
+        onClick = {
+            if (name.isNotBlank() && body.isNotBlank()) {
+                state.upsertInstruction(name, body)
+                name = ""
+                body = ""
+            }
+        },
+        enabled = name.isNotBlank() && body.isNotBlank(),
+        fillWidth = true,
+        small = true
+    )
+    if (items.isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        items.forEach { item ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(item.name, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                    Text(item.body.take(60), fontSize = 9.sp, color = Muted2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(
+                    "Delete",
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { state.deleteInstruction(item.id) }
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = RedInk
+                )
+            }
+        }
+    }
+    Spacer(Modifier.height(14.dp))
+    SectionRow("MEMORY (${memories.size})") {}
+    Spacer(Modifier.height(6.dp))
+    if (memories.isEmpty()) {
+        Text("Nothing remembered yet. Agents save facts with memory_save.", fontSize = 9.5.sp, color = Muted2)
+    } else {
+        memories.take(12).forEach { entry ->
+            Text("• ${entry.text}", fontSize = 9.5.sp, lineHeight = 13.sp, color = InkSoft, modifier = Modifier.padding(vertical = 2.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        AdButton("Clear memory", onClick = { state.clearMemory() }, kind = AdButtonKind.DANGER, small = true)
+    }
+    Spacer(Modifier.height(14.dp))
 }

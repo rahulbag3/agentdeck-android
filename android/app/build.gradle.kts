@@ -113,6 +113,25 @@ android {
     }
 }
 
+// AGP 9 has no applicationVariants API and prunes stale files from outputs/apk,
+// so copy each finished APK to the project dist/ folder with the native-set
+// name. Standard and snapdragon builds then never overwrite each other.
+val nativeSuffix = if (useSnapdragon) "snapdragon" else "standard"
+tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.configureEach {
+    doLast {
+        val buildType = name.removePrefix("assemble").lowercase()
+        val outDir = layout.buildDirectory.dir("outputs/apk/$buildType").get().asFile
+        val distDir = rootProject.projectDir.parentFile.resolve("dist")
+        distDir.mkdirs()
+        outDir.listFiles { file -> file.extension == "apk" }?.forEach { apk ->
+            val target =
+                if (buildType == "release") "agentdeck-$nativeSuffix-1.0.0.apk"
+                else "agentdeck-$nativeSuffix-debug.apk"
+            apk.copyTo(distDir.resolve(target), overwrite = true)
+        }
+    }
+}
+
 ksp {
     // Keep generated Room schemas in version control so future changes can
     // ship explicit migrations instead of wiping saved tasks.
@@ -121,6 +140,10 @@ ksp {
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    // Pure-Java git for the on-device agent workspace (stock Android has no git binary).
+    // SSH client for the Termux bridge (real Node/Python/Gradle on-device).
+    implementation("com.github.mwiede:jsch:0.2.17")
+    implementation("org.eclipse.jgit:org.eclipse.jgit:5.13.5.202508271544-r")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.compose.ui:ui")

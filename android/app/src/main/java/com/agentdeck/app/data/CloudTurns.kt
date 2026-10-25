@@ -4,6 +4,11 @@ private const val MAX_CLOUD_TURNS = 14
 private const val MAX_CLOUD_TURN_CHARS = 6_000
 private const val MAX_CLOUD_CONTEXT_CHARS = 30_000
 
+// Local models fit a small on-device context; keep the prompt well inside it.
+private const val MAX_LOCAL_TURNS = 8
+private const val MAX_LOCAL_TURN_CHARS = 1_200
+private const val MAX_LOCAL_CONTEXT_CHARS = 8_000
+
 /**
  * Builds the provider conversation from the task transcript.
  *
@@ -29,6 +34,28 @@ internal fun buildCloudTurns(
     for (message in history.asReversed()) {
         val text = message.text.take(MAX_CLOUD_TURN_CHARS)
         if (total + text.length > MAX_CLOUD_CONTEXT_CHARS && turns.isNotEmpty()) break
+        total += text.length
+        turns.addFirst(
+            CloudTurn(
+                role = if (message.role == MessageRole.USER) "user" else "assistant",
+                content = text
+            )
+        )
+    }
+    return turns.toList()
+}
+
+/** Same shape as [buildCloudTurns] with a budget that fits the on-device context. */
+internal fun buildLocalTurns(messages: List<Message>): List<CloudTurn> {
+    val filtered = messages.filter {
+        (it.role == MessageRole.USER || it.role == MessageRole.AGENT) && it.text.isNotBlank()
+    }
+    val history = filtered.takeLast(MAX_LOCAL_TURNS)
+    var total = 0
+    val turns = ArrayDeque<CloudTurn>()
+    for (message in history.asReversed()) {
+        val text = message.text.take(MAX_LOCAL_TURN_CHARS)
+        if (total + text.length > MAX_LOCAL_CONTEXT_CHARS && turns.isNotEmpty()) break
         total += text.length
         turns.addFirst(
             CloudTurn(

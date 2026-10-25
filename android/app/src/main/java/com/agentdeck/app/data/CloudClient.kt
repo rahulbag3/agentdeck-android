@@ -137,6 +137,45 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
     }
 
     /** Sends one tiny request so the user can verify URL, key, and model before using it. */
+    /** Lists the model ids an OpenAI-compatible endpoint offers (GET /models). */
+    suspend fun listModels(baseUrl: String, apiKey: String): Result<List<String>> =
+        withContext(Dispatchers.IO) {
+            val base = baseUrl.trim().trimEnd('/')
+            val modelsUrl = "$base/models".toHttpUrlOrNull()
+                ?: return@withContext Result.failure(
+                    CloudError.InvalidResponse("The API base URL is not valid.")
+                )
+            val request = Request.Builder()
+                .url(modelsUrl)
+                .header("Authorization", "Bearer ${apiKey.trim()}")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            val call = client.newBuilder()
+                .callTimeout(CONNECTION_TEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .build()
+                .newCall(request)
+            val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+            try {
+                call.execute().use { response ->
+                    // /models can be several MB (OpenRouter lists hundreds); parse
+                    // with a larger cap than chat responses use.
+                    val bodyText = response.peekBody(MAX_MODELS_BODY_CHARS.toLong()).string()
+                    if (!response.isSuccessful) {
+                        return@withContext Result.failure(handleErrorResponse(response.code, bodyText))
+                    }
+                    Result.success(parseModelIds(bodyText))
+                }
+            } catch (error: SocketTimeoutException) {
+                Result.failure(CloudError.TimeoutError("The model list"))
+            } catch (error: java.io.IOException) {
+                currentCoroutineContext().ensureActive()
+                Result.failure(CloudError.NetworkFailure)
+            } finally {
+                cancellation?.dispose()
+            }
+        }
+
     suspend fun testConnection(baseUrl: String, apiKey: String, model: String): Result<String> =
         withContext(Dispatchers.IO) {
             val endpoint = endpointOrNull(baseUrl)
@@ -379,11 +418,22 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
 
     companion object {
         private const val MAX_BODY_CHARS = 200_000
+        private const val MAX_MODELS_BODY_CHARS = 8_000_000
         private const val MAX_REPLY_CHARS = 80_000
         private const val ERROR_BODY_LIMIT = 20_000L
         private const val MAX_ATTEMPTS = 3
         private const val CONNECTION_TEST_TIMEOUT_SECONDS = 20L
         private val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /** Parses an OpenAI-compatible /models response into distinct model ids. */
+        fun parseModelIds(json: String): List<String> {
+            val obj = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+            val data = obj.optJSONArray("data") ?: return emptyList()
+            return (0 until data.length())
+                .mapNotNull { data.optJSONObject(it)?.optString("id") }
+                .filter { it.isNotBlank() }
+                .distinct()
+        }
 
         fun endpointOrNull(baseUrl: String): HttpUrl? {
             val trimmed = baseUrl.trim().trimEnd('/')

@@ -20,3 +20,8 @@
 # Keep line numbers so Crashlytics stack traces stay readable.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# JGit references desktop-only JMX classes; monitoring is unused on Android.
+-dontwarn javax.management.**
+-dontwarn java.lang.management.**
+-dontwarn org.slf4j.**

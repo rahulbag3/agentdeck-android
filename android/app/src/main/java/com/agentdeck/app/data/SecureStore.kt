@@ -74,6 +74,11 @@ class SecureStore(context: Context) {
         const val CLOUD_API_KEY = "cloud.api-key"
         const val GITHUB_TOKEN = "github.token"
         const val HOST_TOKEN = "host.token"
+        const val SSH_PASSWORD = "ssh.password"
+
+        /** SecureStore key that holds a cloud profile's API key. */
+        fun cloudKeyId(profileId: String) = "cloud.key.$profileId"
+
         private const val KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = "agentdeck.secrets.v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
