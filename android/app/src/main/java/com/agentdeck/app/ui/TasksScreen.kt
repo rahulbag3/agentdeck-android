@@ -63,7 +63,7 @@ fun TasksScreen(state: AgentDeckState, kind: TaskKind = TaskKind.CODING) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "Tasks",
+                        if (kind == TaskKind.CHAT) "Chats" else "Coding",
                         style = MaterialTheme.typography.headlineMedium,
                         color = Ink,
                         maxLines = 1,
@@ -82,7 +82,7 @@ fun TasksScreen(state: AgentDeckState, kind: TaskKind = TaskKind.CODING) {
                         Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(13.dp), tint = Muted2)
                     }
                 }
-                AdIconButton(Icons.Outlined.Add, "New task", state::openNewTask, filled = true)
+                AdIconButton(Icons.Outlined.Add, "New task", { state.startQuickSession(kind) }, filled = true)
             }
         }
 

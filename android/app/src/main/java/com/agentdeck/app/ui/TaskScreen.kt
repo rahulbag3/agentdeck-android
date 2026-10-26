@@ -227,7 +227,7 @@ private fun TaskTopBar(task: Task, project: Project, local: Boolean, cloud: Bool
                     cloud -> task.repoContext?.repo ?: project.name
                     else -> project.name
                 }
-                val branchLabel = task.branch.ifBlank { if (cloud) "analysis" else project.defaultBranch }
+                val branchLabel = task.branch.ifBlank { if (cloud) "session" else project.defaultBranch }
                 Text(
                     "$scopeLabel · $branchLabel",
                     fontSize = 9.5.sp,
@@ -245,7 +245,7 @@ private fun TaskTopBar(task: Task, project: Project, local: Boolean, cloud: Bool
                     CloudChip()
                 }
                 Spacer(Modifier.width(4.dp))
-                if (cloud) AnalysisTag() else if (!local) HostTag()
+                if (!cloud && !local) HostTag()
             }
         }
         Spacer(Modifier.width(8.dp))
@@ -339,24 +339,19 @@ private fun ChatContent(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        if (task.agentMode) {
-            InfoBanner(
-                title = "Agent task",
-                text = "This task works in the project workspace on this phone: reading files, editing, running shell commands and git. Reads run automatically; every write, command, and commit waits for your approval.",
-                kind = BannerKind.LOCAL,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        } else if (task.analysisOnly) {
+        if (task.analysisOnly) {
             RepoContextSummary(state, task)
             Spacer(Modifier.height(10.dp))
+        }
+        if (task.agentMode || cloud) {
             InfoBanner(
-                title = "Read-only cloud analysis",
-                text = if (task.repoContext != null) {
-                    "Replies can review the attached snapshot and propose patches. Nothing is written until you apply a proposal from the Changes tab — that opens a pull request on GitHub."
+                title = "Agent session",
+                text = if (task.agentMode) {
+                    "This task works in the project workspace on this phone: reading files, editing, running shell commands and git. Reads run automatically; every write, command, and commit waits for your approval."
                 } else {
-                    "This chat can plan and propose patches, but no repository snapshot is attached. Nothing is written until you apply a proposal from the Changes tab."
+                    "Full agent session: web search, page retrieval, APIs, memory, and file tools. Reads run automatically; consequential actions wait for your approval."
                 },
-                kind = BannerKind.CLOUD,
+                kind = if (task.agentMode) BannerKind.LOCAL else BannerKind.CLOUD,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
             if (task.plan != null && task.status in listOf(TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.NEEDS_INPUT, TaskStatus.FAILED)) {
@@ -1288,7 +1283,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                 streamingHost -> "Host run in progress. Stop to cancel the agent on the host; reported changes stay."
                 streamingLocal -> "Generating on this phone. Stop to keep the partial reply; nothing is changed or run."
                 streamingCloud -> "Cloud reply streaming. Stop to keep the partial reply; nothing is changed or run."
-                cloud -> "Nothing is changed or run here. Apply proposed files from the Changes tab to open a pull request."
+                cloud -> "Agent session · tools run with your approval."
                 local -> "Runs on this phone. Nothing is changed or run here."
                 task.status == TaskStatus.FAILED -> "This task is stopped. Messages are saved; retry the task to resume."
                 task.status == TaskStatus.NEEDS_INPUT && task.permissionRequest != null -> "Resolve the permission request above, or reply below."

@@ -48,6 +48,7 @@ internal object TaskCodec {
         payloadJson = JSONObject().apply {
             put("analysisOnly", task.analysisOnly)
             put("agentMode", task.agentMode)
+            put("systemPrompt", task.systemPrompt)
             put("kind", task.kind.name)
             put("repoContextRequested", task.repoContextRequested)
             put("cloudModel", task.cloudModel ?: JSONObject.NULL)
@@ -90,6 +91,7 @@ internal object TaskCodec {
             plan = payload.objectsOrNull("plan")?.mapNotNull(::planStepFromJson),
             analysisOnly = payload.optBoolean("analysisOnly", false),
             agentMode = payload.optBoolean("agentMode", false),
+            systemPrompt = payload.optString("systemPrompt", ""),
             kind = enumOrNull<TaskKind>(payload.optString("kind", "CODING")) ?: TaskKind.CODING,
             repoContextRequested = payload.optBoolean("repoContextRequested", false),
             repoContext = payload.objectOrNull("repoContext")?.let(::repoContextFromJson),

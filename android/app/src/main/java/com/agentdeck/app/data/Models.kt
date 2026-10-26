@@ -279,6 +279,8 @@ data class Task(
     val failure: Failure? = null,
     val plan: List<PlanStep>? = null,
     val analysisOnly: Boolean = false,
+    /** User-provided system prompt for this session; blank = default behaviour. */
+    val systemPrompt: String = "",
     /** Cloud task that acts on the project workspace with tools (files/shell/git). */
     val agentMode: Boolean = false,
     /** CHAT: general assistant with web/memory tools. CODING: workspace tools + git. */

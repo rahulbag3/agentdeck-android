@@ -87,13 +87,13 @@ fun HomeScreen(state: AgentDeckState) {
                     ModeLauncherCard(
                         title = "Chat",
                         subtitle = "AI assistant — ask anything, research the web, use memory, call APIs",
-                        onClick = { state.openNewTask(TaskKind.CHAT) },
+                        onClick = { state.startQuickSession(TaskKind.CHAT) },
                         modifier = Modifier.weight(1f)
                     )
                     ModeLauncherCard(
                         title = "Code",
                         subtitle = "Coding agent — edit files, run commands, manage git, review diffs",
-                        onClick = { state.openNewTask(TaskKind.CODING) },
+                        onClick = { state.startQuickSession(TaskKind.CODING) },
                         modifier = Modifier.weight(1f)
                     )
                 }

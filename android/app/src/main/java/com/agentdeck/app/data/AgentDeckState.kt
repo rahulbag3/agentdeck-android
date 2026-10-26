@@ -733,6 +733,42 @@ class AgentDeckState(
         sheet = null
     }
 
+    /** Mode card tap: creates the session immediately and opens the composer. */
+    fun startQuickSession(kind: TaskKind) {
+        val m = model(defaultModelId())?.takeIf { it.isReady && (it.isCloud || it.isLocal) }
+            ?: data.models.firstOrNull { it.isCloud && it.isReady }
+            ?: data.models.firstOrNull { it.isLocal && it.isReady }
+        if (m == null) {
+            toast("Add a cloud API or load a local model first")
+            openCloudSetup()
+            return
+        }
+        val modelId = m.id
+        val chat = kind == TaskKind.CHAT
+        val stamp = System.currentTimeMillis()
+        val id = "t-" + java.util.UUID.randomUUID().toString().take(8)
+        val task = Task(
+            id = id,
+            title = if (chat) "New chat" else "New coding session",
+            prompt = "",
+            projectId = data.settings.activeProjectId,
+            branch = "",
+            modelId = modelId,
+            status = TaskStatus.NEEDS_INPUT,
+            createdAt = stamp,
+            updatedAt = stamp,
+            kind = kind,
+            agentMode = !chat && m.isCloud,
+            analysisOnly = false,
+            cloudModel = if (m.isCloud) cloudConfig.model else null,
+            plan = if (chat) null else cloudPlan(false)
+        )
+        data = data.copy(tasks = listOf(task) + data.tasks)
+        backStack.clear()
+        backStack.add(Screen.Root(if (chat) RootTab.TASKS else RootTab.PROJECTS))
+        screen = Screen.TaskScreen(id, TaskTab.CHAT)
+    }
+
     fun openNewTask(kind: TaskKind = TaskKind.CODING) {
         if (newTaskDraft.title.isBlank() && newTaskDraft.prompt.isBlank()) {
             newTaskDraft = initialDraft().copy(taskKind = kind)
@@ -1673,7 +1709,7 @@ class AgentDeckState(
                     local -> null
                     else -> defaultPlan()
                 },
-                analysisOnly = cloud && !chat,
+                analysisOnly = false,
                 agentMode = agentMode,
                 kind = draft.taskKind,
                 repoContextRequested = useContext,
@@ -1769,6 +1805,9 @@ class AgentDeckState(
             return
         }
 
+        if (task.title == "New chat" || task.title == "New coding session") {
+            updateTask(taskId) { it.copy(title = rawText.take(48).ifBlank { it.title }) }
+        }
         if (isLocalTask(task)) {
             val model = model(task.modelId)
             if (model == null) {
@@ -1975,6 +2014,12 @@ class AgentDeckState(
         }
     }
 
+    fun setTaskSystemPrompt(taskId: String, prompt: String) {
+        val now = System.currentTimeMillis()
+        updateTask(taskId) { it.copy(systemPrompt = prompt.trim().take(4_000), updatedAt = now) }
+        toast(if (prompt.isBlank()) "System prompt cleared" else "System prompt saved for this session")
+    }
+
     fun saveSshConfig(enabled: Boolean, port: Int, user: String, password: String) {
         config.sshEnabled = enabled
         config.sshPort = port.coerceIn(1, 65535)
@@ -2056,8 +2101,7 @@ class AgentDeckState(
             val systemPrompt = ToolParser.buildSystemPrompt(
                 coding = coding,
                 memorySnapshot = memoryStore.snapshot(),
-                instruction = instructions.all().firstOrNull { it.id == newTaskDraft.instructionId }?.body
-                    ?: instructions.all().firstOrNull { it.id == "" }?.body,
+                instruction = initial.systemPrompt.ifBlank { null },
                 currentTime = java.text.SimpleDateFormat(
                     "EEE, dd MMM yyyy HH:mm z", java.util.Locale.US
                 ).format(java.util.Date())
@@ -2819,7 +2863,7 @@ class AgentDeckState(
                     )
                 }
             }
-            if (task.agentMode || task.kind == TaskKind.CHAT) runAgentLoop(taskId) else streamCloudReply(taskId, apiKey, cfg, context)
+            runAgentLoop(taskId)
         }
     }
 
@@ -2858,8 +2902,7 @@ class AgentDeckState(
         val context = task.repoContext
         cloudJobs.remove(taskId)?.cancel()
         cloudJobs[taskId] = scope.launch {
-            if (task.agentMode || task.kind == TaskKind.CHAT) runAgentLoop(taskId)
-            else streamCloudReply(taskId, apiKey, cfg, context, dropTrailingAssistant)
+            runAgentLoop(taskId)
         }
     }
 
