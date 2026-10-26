@@ -520,7 +520,6 @@ fun HomeTopBar(
             ) {
                 Icon(Icons.Outlined.Info, contentDescription = "About this workspace", modifier = Modifier.size(12.dp), tint = Muted)
                 Spacer(Modifier.width(4.dp))
-                Text("LOCAL", fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = Muted, letterSpacing = 0.5.sp)
             }
             Box(
                 modifier = Modifier

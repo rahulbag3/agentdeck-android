@@ -956,6 +956,8 @@ private fun DecisionCard(task: Task) {
 
 @Composable
 private fun TaskHostBanner(state: AgentDeckState, task: Task, local: Boolean, cloud: Boolean = false) {
+    // Only host-model tasks depend on the optional PC bridge.
+    if (state.model(task.modelId)?.isHost != true) return
     if (!state.hostConfig.configured) return
     if (cloud) {
         if (state.canReachHost()) return

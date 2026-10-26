@@ -86,7 +86,10 @@ fun NewTaskScreen(state: AgentDeckState) {
     Column(Modifier.fillMaxSize().background(Surface2)) {
         AdBackTopBar(
             title = "New task",
-            subtitle = "Give the agent a clear goal.",
+            subtitle = if (draft.taskKind == TaskKind.CHAT)
+                "Ask your AI assistant anything."
+            else
+                "Describe the task for the coding agent.",
             onBack = state::back
         )
         Column(

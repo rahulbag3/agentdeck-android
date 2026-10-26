@@ -336,6 +336,19 @@ Known gap: local models still do not read the GitHub snapshot (cloud-only).
 - `README.md` covers features, privacy properties, build/release steps,
   architecture, test inventory, and known limitations.
 
+**Two-mode restructure of v1 UI (2026-10-25, final)**
+- Home is now a pure launcher: two large cards — **Chat** (AI assistant) and
+  **Code** (coding agent) — plus a Recent list. Removed from Home: host
+  offline banner, project switcher, stats grid, search field, LOCAL pill.
+- Bottom bar: Home / Chats / Coding / Settings. The host banner now only
+  appears on host-model tasks; New Task subtitles are per-mode; list titles
+  are Chats/Coding.
+- **Install note for this phone:** the installed build is RELEASE-signed
+  (user installed a dist APK). `adb install -r` of a debug APK fails with
+  INSTALL_FAILED_UPDATE_INCOMPATIBLE. Update in place with
+  `adb install -r dist/agentdeck-snapdragon-1.0.0.apk` (or standard) — data
+  survives; debug installs require uninstalling (data loss).
+
 **Two-mode launcher + Termux bridge + llama b11876 (2026-10-25, late)**
 - **Simplified interface**: Home now opens with two launcher cards — Chat and
   Coding — each jumping straight into New Task with that mode preselected.

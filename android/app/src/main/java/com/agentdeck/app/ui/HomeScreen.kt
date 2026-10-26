@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -72,12 +73,7 @@ import com.agentdeck.app.ui.theme.Surface as AdSurface
 
 @Composable
 fun HomeScreen(state: AgentDeckState) {
-    val project = state.activeProject
-    val tasks = state.activeTasks()
-    val counts = state.countsFor(tasks)
-    val filtering = state.homeQuery.isNotBlank()
-    val visible = if (filtering) state.filteredActiveTasks(state.homeQuery, StatusFilter.ALL) else tasks
-    val recent = if (filtering) visible.take(12) else visible.take(4)
+    val recent = state.data.tasks.sortedByDescending { it.updatedAt }.take(5)
 
     Column(Modifier.fillMaxSize().background(Surface2)) {
         HomeTopBar(onAbout = state::openAbout, onSettings = state::openSettings)
@@ -86,37 +82,17 @@ fun HomeScreen(state: AgentDeckState) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (state.hostConfig.configured && !state.data.host.connected) {
-                item {
-                    InfoBanner(
-                        title = "${state.data.host.name} is offline",
-                        text = "Cloud and local chat still work. Host models and execution need a reconnect.",
-                        kind = BannerKind.WARNING,
-                        action = {
-                            AdButton(
-                                "Reconnect",
-                                onClick = state::reconnectHost,
-                                kind = AdButtonKind.OUTLINE,
-                                small = true
-                            )
-                        }
-                    )
-                }
-            }
-
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     ModeLauncherCard(
                         title = "Chat",
-                        subtitle = "Ask · research · web · memory",
-                        selected = true,
+                        subtitle = "AI assistant — ask anything, research the web, use memory, call APIs",
                         onClick = { state.openNewTask(TaskKind.CHAT) },
                         modifier = Modifier.weight(1f)
                     )
                     ModeLauncherCard(
-                        title = "Coding",
-                        subtitle = "Workspace · files · git · shell",
-                        selected = false,
+                        title = "Code",
+                        subtitle = "Coding agent — edit files, run commands, manage git, review diffs",
                         onClick = { state.openNewTask(TaskKind.CODING) },
                         modifier = Modifier.weight(1f)
                     )
@@ -124,92 +100,28 @@ fun HomeScreen(state: AgentDeckState) {
             }
 
             item {
-                ProjectSwitcherCard(
-                    projectName = project.name,
-                    repo = project.repo,
-                    branch = project.defaultBranch,
-                    hostConnected = state.data.host.connected,
-                    lastSeen = state.data.host.lastSeen,
-                    onClick = state::openProjectSheet
+                Text(
+                    "Recent",
+                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                    color = Ink,
+                    modifier = Modifier.padding(top = 2.dp)
                 )
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    AdSearchField(
-                        value = state.homeQuery,
-                        onValueChange = { state.homeQuery = it },
-                        placeholder = "Search tasks",
-                        modifier = Modifier.weight(1f)
-                    )
-                    AdButton(
-                        text = "New task",
-                        onClick = state::openNewTask,
-                        icon = Icons.Outlined.Add,
-                        small = false
-                    )
-                }
-            }
-
-            item {
-                SectionHeader(
-                    title = "Status",
-                    hint = "${tasks.count { it.status != TaskStatus.COMPLETED }} open task${if (tasks.count { it.status != TaskStatus.COMPLETED } == 1) "" else "s"}"
-                )
-                StatsGrid(
-                    tasks = tasks,
-                    onFilter = state::openFilter
-                )
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        if (filtering) "Results" else "Recent tasks",
-                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                        color = Ink,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { state.viewAllTasks() }
-                            .padding(horizontal = 4.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("View all", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BlueInk)
-                        Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(15.dp), tint = Muted2)
-                    }
-                }
             }
 
             if (recent.isEmpty()) {
                 item {
                     AdEmptyState(
-                        icon = if (filtering) Icons.Outlined.Search else Icons.Outlined.Description,
-                        title = if (filtering) "No matching tasks" else "No tasks yet",
-                        text = if (filtering) "Try a different title, project, or branch." else "Create a task to get started.",
-                        action = {
-                            if (filtering) {
-                                AdButton("Clear search", onClick = { state.homeQuery = "" }, kind = AdButtonKind.OUTLINE, small = true)
-                            } else {
-                                AdButton("New task", onClick = state::openNewTask, small = true)
-                            }
-                        }
+                        icon = Icons.Outlined.ChatBubbleOutline,
+                        title = "Nothing here yet",
+                        text = "Pick a mode above and start — everything runs on this phone.",
+                        action = null
                     )
                 }
             } else {
                 items(recent, key = { it.id }) { task ->
                     AdTaskCard(
                         task = task,
-                        projectName = state.project(task.projectId)?.name ?: project.name,
+                        projectName = state.project(task.projectId)?.name ?: "",
                         modelName = state.taskModelName(task),
                         isLocal = state.isLocalTask(task),
                         isCloud = state.isCloudTask(task),
@@ -220,7 +132,7 @@ fun HomeScreen(state: AgentDeckState) {
 
             item {
                 Text(
-                    "Cloud and on-device chat run on this phone · proposals apply to GitHub as pull requests",
+                    "AI assistant and coding agent · everything runs on this phone",
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     fontSize = 9.5.sp,
@@ -327,25 +239,34 @@ private fun StatsGrid(tasks: List<Task>, onFilter: (StatusFilter) -> Unit) {
 private fun ModeLauncherCard(
     title: String,
     subtitle: String,
-    selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) BlueSoft else com.agentdeck.app.ui.theme.BlueSoft)
-            .border(1.dp, if (selected) BlueInk else Line, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
+            .background(AdSurface)
+            .border(1.dp, Line, RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 13.dp)
+            .padding(horizontal = 15.dp, vertical = 16.dp)
     ) {
-        Text(
-            title,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (selected) BlueInk else Ink
-        )
-        Spacer(Modifier.height(3.dp))
-        Text(subtitle, fontSize = 9.sp, lineHeight = 12.sp, color = Muted2)
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(BlueSoft),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                if (title == "Chat") Icons.Outlined.ChatBubbleOutline else Icons.Outlined.Terminal,
+                contentDescription = null,
+                modifier = Modifier.size(19.dp),
+                tint = BlueInk
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(4.dp))
+        Text(subtitle, fontSize = 9.sp, lineHeight = 13.sp, color = Muted2)
     }
 }
