@@ -293,7 +293,8 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     val line = source.readUtf8Line() ?: break
-                    if (!line.startsWith("data:")) continue
+                    var firstChunkLogged = true
+                if (!line.startsWith("data:")) continue
                     val data = line.removePrefix("data:").trim()
                     if (data.isEmpty()) continue
                     if (data == "[DONE]") break
@@ -304,10 +305,21 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
                             return Result.failure(classifyProviderError(message, errorObj.optInt("code")))
                         }
                     }
+                    if (firstChunkLogged) {
+                        firstChunkLogged = false
+                        val delta0 = chunk.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                        Logger.warn(
+                            "SSE diag: chunk keys=${chunk.keys().asSequence().toList()} " +
+                                "delta keys=${delta0?.keys()?.asSequence()?.toList()} " +
+                                "finish=${chunk.optJSONArray("choices")?.optJSONObject(0)?.optString("finish_reason")}"
+                        )
+                    }
                     val choice = chunk.optJSONArray("choices")?.optJSONObject(0) ?: continue
-                    val content = choice.optJSONObject("delta")
-                        ?.optString("content")
-                        ?.takeIf { it.isNotEmpty() && it != "null" }
+                    val delta = choice.optJSONObject("delta")
+                    // Reasoning-style models (dots, DeepSeek-R1, …) stream their
+                    // output as reasoning_content with an empty content field.
+                    val content = delta?.optString("content")?.takeIf { it.isNotEmpty() && it != "null" }
+                        ?: delta?.optString("reasoning_content")?.takeIf { it.isNotEmpty() && it != "null" }
                     if (content != null) {
                         sawContent = true
                         totalChars += content.length
@@ -406,11 +418,13 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
         json.optJSONObject("error")?.optString("message")
             ?.takeIf { it.isNotBlank() }
             ?.let { throw CloudRequestException(classifyProviderError(it, 0)) }
-        return json.optJSONArray("choices")
+        val message = json.optJSONArray("choices")
             ?.optJSONObject(0)
             ?.optJSONObject("message")
-            ?.optString("content")
-            .orEmpty()
+        // Reasoning-style models put output in reasoning_content, content, or both.
+        return message?.optString("content").orEmpty().ifBlank {
+            message?.optString("reasoning_content").orEmpty()
+        }
     }
 
     private fun backoffMs(attempt: Int): Long =

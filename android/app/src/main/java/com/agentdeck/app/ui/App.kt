@@ -52,6 +52,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewModelScope
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.RootTab
+import com.agentdeck.app.data.TaskKind
 import com.agentdeck.app.data.Screen
 import com.agentdeck.app.ui.theme.AmberInk
 import com.agentdeck.app.ui.theme.AmberSoft
@@ -135,8 +136,8 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
                             Box(Modifier.weight(1f)) {
                                 when (currentScreen.tab) {
                                     RootTab.HOME -> HomeScreen(state)
-                                    RootTab.TASKS -> TasksScreen(state)
-                                    RootTab.PROJECTS -> ProjectsScreen(state)
+                                    RootTab.TASKS -> TasksScreen(state, TaskKind.CHAT)
+                                    RootTab.PROJECTS -> TasksScreen(state, TaskKind.CODING)
                                     RootTab.SETTINGS -> SettingsScreen(state)
                                 }
                             }
