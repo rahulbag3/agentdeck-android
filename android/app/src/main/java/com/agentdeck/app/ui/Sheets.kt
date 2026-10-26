@@ -598,24 +598,6 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
         Spacer(Modifier.height(6.dp))
         Text(error!!, fontSize = 10.5.sp, lineHeight = 15.sp, color = RedInk)
     }
-    Spacer(Modifier.height(12.dp))
-    SectionRow("SYSTEM PROMPT · THIS SESSION") {}
-    Spacer(Modifier.height(6.dp))
-    var sysPrompt by remember(task.id) { mutableStateOf(task.systemPrompt) }
-    AdTextField(
-        value = sysPrompt,
-        onValueChange = { sysPrompt = it },
-        placeholder = "Custom instructions for this session…",
-        minHeight = 64.dp
-    )
-    Spacer(Modifier.height(6.dp))
-    AdButton(
-        "Save system prompt",
-        onClick = { state.setTaskSystemPrompt(taskId, sysPrompt) },
-        kind = AdButtonKind.OUTLINE,
-        small = true,
-        enabled = sysPrompt != task.systemPrompt
-    )
     Spacer(Modifier.height(10.dp))
     SectionRow("ON THIS DEVICE") {
         if (LocalEngine.available) AdTag("LLAMA.CPP", GreenSoft, GreenInk) else PlaceholderTag("No engine")
