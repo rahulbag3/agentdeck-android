@@ -1861,7 +1861,7 @@ class AgentDeckState(
                 delay(450)
                 markDelivered(taskId, message.id)
                 sending = sending - taskId
-                startLocalReply(taskId)
+                runAgentLoop(taskId)
             }
             return
         }

@@ -72,13 +72,15 @@ Java_com_agentdeck_app_data_NeedleEngine_nativeComplete(
     jstring input, jint maxNewTokens) {
     if (!g_inited) return toJString(env, "{\"error\":\"not initialized\"}");
     const std::string prompt = toStd(env, input);
-    std::vector<char> out(32768);
+    std::vector<char> out(65536);
     const int result = needle_complete(
         prompt.c_str(), nullptr, 0, maxNewTokens, out.data(), static_cast<int>(out.size()));
     if (result < 0) {
         LOGE("needle_complete failed: %s", needle_last_error());
         return toJString(env, std::string("{\"error\":\"") + needle_last_error() + "\"}");
     }
+    // needle_complete's return is the generated token count, not a character
+    // count. The buffer is zero-initialized, so read to the first null.
     return toJString(env, std::string(out.data()));
 }
 
