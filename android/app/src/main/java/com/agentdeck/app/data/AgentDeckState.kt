@@ -812,8 +812,34 @@ class AgentDeckState(
             return
         }
         diffFileId = null
+        val current = screen
+        if (current is Screen.Root && current.tab != RootTab.HOME && backStack.none { it is Screen.Root && it.tab == current.tab }) {
+            // Any root tab backs out to Home instead of leaving the app.
+            selectRoot(RootTab.HOME)
+            return
+        }
         val previous = backStack.removeLastOrNull()
-        screen = previous ?: Screen.Root(RootTab.TASKS)
+        screen = previous ?: Screen.Root(RootTab.HOME)
+    }
+
+    fun handleSystemBackEnabled(): Boolean {
+        if (diffFileId != null) return true
+        val current = screen
+        return !(current is Screen.Root && current.tab == RootTab.HOME && backStack.isEmpty() && sheet == null)
+    }
+
+    /** System back: close overlays, pop screens, or go Home; never closes outright. */
+    fun handleSystemBack(): Boolean {
+        if (diffFileId != null) {
+            diffFileId = null
+            return true
+        }
+        val current = screen
+        if (current is Screen.Root && current.tab == RootTab.HOME && backStack.isEmpty() && sheet == null) {
+            return false  // let the system exit
+        }
+        back()
+        return true
     }
 
     fun selectTaskTab(tab: TaskTab) {

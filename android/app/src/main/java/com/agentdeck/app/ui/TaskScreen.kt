@@ -579,8 +579,13 @@ private fun MessageBlock(
             }
         }
         Spacer(Modifier.height(3.dp))
-        if (provider == ModelProvider.CLOUD) {
-            MarkdownText(message.text, Modifier.fillMaxWidth())
+        if (message.role == MessageRole.AGENT) {
+            // Local models (Qwen etc.) emit markdown and reasoning blocks too.
+            val clean = message.text
+                .replace(Regex("(?s)<think>.*?</think>"), "")
+                .replace(Regex("(?s)<think>.*$"), "")
+                .trim()
+            MarkdownText(clean.ifBlank { message.text.trim() }, Modifier.fillMaxWidth())
         } else {
             Text(message.text, fontSize = 12.5.sp, lineHeight = 19.sp, color = Ink)
         }
@@ -1128,6 +1133,39 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         fontSize = 9.5.sp,
                         fontWeight = FontWeight.Bold,
+                        color = BlueInk
+                    )
+                }
+            }
+            if (state.isAgentRunning(task.id)) {
+                val lastToolNote = task.messages.lastOrNull { it.text.startsWith("⚙") }?.text.orEmpty()
+                    .removePrefix("⚙ ").lineSequence().firstOrNull().orEmpty().take(60)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(BlueSoft)
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(11.dp),
+                        strokeWidth = 1.8.dp,
+                        color = BlueInk
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        if (task.permissionRequest != null) {
+                            "Waiting for your approval"
+                        } else if (lastToolNote.isNotBlank()) {
+                            "Working · $lastToolNote"
+                        } else {
+                            "Thinking…"
+                        },
+                        modifier = Modifier.weight(1f),
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = BlueInk
                     )
                 }

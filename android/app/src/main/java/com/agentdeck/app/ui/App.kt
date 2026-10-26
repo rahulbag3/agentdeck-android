@@ -112,7 +112,7 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
     }
 
     val currentScreen = state.screen
-    BackHandler(enabled = state.sheet == null && currentScreen is Screen.TaskScreen && state.diffFileId != null) {
+    BackHandler(enabled = state.sheet == null && state.handleSystemBackEnabled()) {
         state.selectDiffFile(null)
     }
     BackHandler(enabled = state.sheet == null && state.diffFileId == null && state.canGoBack()) {
