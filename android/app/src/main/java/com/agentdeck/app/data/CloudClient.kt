@@ -40,8 +40,12 @@ sealed class CloudError(
     class AuthenticationError(message: String) :
         CloudError(message, statusCode = 401)
 
-    class RateLimitError(val retryAfterSeconds: Int? = null) : CloudError(
-        "Rate limit or quota reached. " + (retryAfterSeconds?.let { "Try again in $it seconds." } ?: "Wait a moment and try again."),
+    class RateLimitError(
+        val retryAfterSeconds: Int? = null,
+        val detail: String? = null
+    ) : CloudError(
+        (detail?.take(160)?.let { "$it " } ?: "Rate limit or quota reached. ") +
+            (retryAfterSeconds?.let { "Try again in $it seconds." } ?: "Wait a moment and try again."),
         statusCode = 429,
         isRetryable = true
     )
@@ -120,17 +124,31 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
                 onDelta(delta)
             }
             val error = outcome.exceptionOrNull() as? CloudError
+            val rateLimited = error is CloudError.RateLimitError
+            // Rate limits must not be hammered: one retry after a real wait,
+            // otherwise the app burns the free-tier quota by itself.
+            val maxForThisError = if (rateLimited) 2 else MAX_ATTEMPTS
             val retry = error != null &&
                 error.isRetryable &&
                 !delivered &&
-                attempt < MAX_ATTEMPTS
+                attempt < maxForThisError
             if (!retry) return@withContext outcome
             Logger.warn(
                 "Retrying cloud request",
                 null,
-                mapOf("attempt" to attempt, "error" to error.javaClass.simpleName)
+                mapOf(
+                    "attempt" to attempt,
+                    "error" to error.javaClass.simpleName,
+                    "detail" to error.message?.take(120).orEmpty()
+                )
             )
-            delay(backoffMs(attempt))
+            delay(
+                if (rateLimited) {
+                    ((error as CloudError.RateLimitError).retryAfterSeconds ?: 30).coerceAtMost(90) * 1000L
+                } else {
+                    backoffMs(attempt)
+                }
+            )
         }
         @Suppress("UNREACHABLE_CODE")
         Result.failure(CloudError.NetworkFailure)
@@ -372,7 +390,8 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
                 "The request was too large for this model. Try a task with less repository context."
             )
             429 -> CloudError.RateLimitError(
-                retryAfterSeconds = parseRetryAfter(bodyText)
+                retryAfterSeconds = parseRetryAfter(bodyText),
+                detail = providerMessage
             )
             in 500..599 -> CloudError.HttpError(
                 providerMessage ?: "The provider had a server error. Try again in a moment.",

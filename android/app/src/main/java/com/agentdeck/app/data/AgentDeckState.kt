@@ -2145,6 +2145,7 @@ class AgentDeckState(
             val modelCandidates = mutableListOf(cfg.model)
             activeCloudProfile()?.models?.forEach { if (it !in modelCandidates) modelCandidates.add(it) }
             var candidateIndex = 0
+            var lastCloudRateLimited = false
             try {
                 for (step in 0 until MAX_AGENT_STEPS) {
                     currentCoroutineContext().ensureActive()
@@ -2152,13 +2153,13 @@ class AgentDeckState(
                         streamAgentReply(
                             taskId, apiKey.orEmpty(), cfg.copy(model = modelCandidates[candidateIndex]),
                             initial, baseTurns + extraTurns, systemPrompt,
-                            failHard = candidateIndex >= modelCandidates.size - 1
+                            failHard = candidateIndex >= modelCandidates.size - 1 || lastCloudRateLimited
                         )
                     } else {
                         localAgentReply(taskId, initial, baseTurns + extraTurns, systemPrompt)
                     } ?: run {
                         candidateIndex++
-                        if (usingCloud && candidateIndex < modelCandidates.size) {
+                        if (usingCloud && candidateIndex < modelCandidates.size && !lastCloudRateLimited) {
                             val next = modelCandidates[candidateIndex]
                             updateTask(taskId) {
                                 it.copy(
@@ -2308,6 +2309,7 @@ class AgentDeckState(
                 text
             },
             onFailure = { error ->
+                lastCloudRateLimited = error is CloudError.RateLimitError
                 if (added) {
                     updateMessage(taskId, replyId) { it.copy(text = "$text\n\n[stream interrupted]", at = now) }
                 }
