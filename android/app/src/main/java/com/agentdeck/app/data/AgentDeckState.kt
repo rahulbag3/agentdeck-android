@@ -1393,7 +1393,11 @@ class AgentDeckState(
             cloudModelsFetching = false
             result.fold(
                 onSuccess = { ids ->
-                    fetchedCloudModels = ids
+                    // Free models first, then alphabetical.
+                    fetchedCloudModels = ids.sortedWith(
+                        compareByDescending<String> { it.endsWith(":free", ignoreCase = true) }
+                            .thenBy { it.lowercase() }
+                    )
                     toast("${ids.size} models available on ${profile.label}")
                 },
                 onFailure = { error ->
@@ -2014,6 +2018,18 @@ class AgentDeckState(
         }
     }
 
+    fun agentBehaviorMode(): String = config.agentBehavior
+
+    fun globalSystemPromptText(): String = config.globalSystemPrompt
+
+    fun setAgentBehavior(mode: String) {
+        config.agentBehavior = mode
+    }
+
+    fun setGlobalSystemPrompt(prompt: String) {
+        config.globalSystemPrompt = prompt.trim().take(4_000)
+    }
+
     fun setTaskSystemPrompt(taskId: String, prompt: String) {
         val now = System.currentTimeMillis()
         updateTask(taskId) { it.copy(systemPrompt = prompt.trim().take(4_000), updatedAt = now) }
@@ -2101,21 +2117,48 @@ class AgentDeckState(
             val systemPrompt = ToolParser.buildSystemPrompt(
                 coding = coding,
                 memorySnapshot = memoryStore.snapshot(),
-                instruction = initial.systemPrompt.ifBlank { null },
+                instruction = initial.systemPrompt.ifBlank {
+                    if (config.agentBehavior == "prompt") config.globalSystemPrompt.ifBlank { null } else null
+                },
                 currentTime = java.text.SimpleDateFormat(
                     "EEE, dd MMM yyyy HH:mm z", java.util.Locale.US
                 ).format(java.util.Date())
             )
             val baseTurns = buildCloudTurns(initial.messages)
             var extraTurns = emptyList<CloudTurn>()
+            // On provider errors (401/429/5xx), fall back to the next saved
+            // model of the active profile before giving up.
+            val modelCandidates = mutableListOf(cfg.model)
+            activeCloudProfile()?.models?.forEach { if (it !in modelCandidates) modelCandidates.add(it) }
+            var candidateIndex = 0
             try {
                 for (step in 0 until MAX_AGENT_STEPS) {
                     currentCoroutineContext().ensureActive()
                     val replyText = if (usingCloud) {
-                        streamAgentReply(taskId, apiKey.orEmpty(), cfg, initial, baseTurns + extraTurns, systemPrompt)
+                        streamAgentReply(
+                            taskId, apiKey.orEmpty(), cfg.copy(model = modelCandidates[candidateIndex]),
+                            initial, baseTurns + extraTurns, systemPrompt,
+                            failHard = candidateIndex >= modelCandidates.size - 1
+                        )
                     } else {
                         localAgentReply(taskId, initial, baseTurns + extraTurns, systemPrompt)
-                    } ?: return@launch
+                    } ?: run {
+                        candidateIndex++
+                        if (usingCloud && candidateIndex < modelCandidates.size) {
+                            val next = modelCandidates[candidateIndex]
+                            updateTask(taskId) {
+                                it.copy(
+                                    cloudModel = next,
+                                    updatedAt = System.currentTimeMillis(),
+                                    activity = it.activity + ActivityEvent("cloud", "Provider error · retrying with $next", System.currentTimeMillis())
+                                )
+                            }
+                            null
+                        } else {
+                            return@launch
+                        }
+                    }
+                    if (replyText == null) continue
                     extraTurns = extraTurns + CloudTurn("assistant", replyText.take(6_000))
                     val calls = ToolParser.parse(replyText)
                     if (calls.isEmpty()) {
@@ -2160,7 +2203,8 @@ class AgentDeckState(
         cfg: CloudConfig,
         initial: Task,
         turns: List<CloudTurn>,
-        systemPrompt: String
+        systemPrompt: String,
+        failHard: Boolean = true
     ): String? {
         val replyId = newMessageId()
         val buffer = StringBuilder()
@@ -2240,7 +2284,9 @@ class AgentDeckState(
                 if (added) {
                     updateMessage(taskId, replyId) { it.copy(text = "$text\n\n[stream interrupted]", at = now) }
                 }
-                agentFailure(taskId, error.message ?: "The request failed.")
+                if (failHard) {
+                    agentFailure(taskId, error.message ?: "The request failed.")
+                }
                 null
             }
         )

@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Code
@@ -664,14 +666,77 @@ fun SettingsScreen(state: AgentDeckState) {
                 }
             }
 
-            item { SettingsLabel("Standard permissions") }
+            item { SettingsLabel("Agent behavior") }
             item {
+                var mode by remember { mutableStateOf(state.agentBehaviorMode()) }
+                var prompt by remember { mutableStateOf(state.globalSystemPromptText()) }
                 AdCard(padding = 4.dp) {
-                    PermissionRow(Icons.Outlined.Check, GreenSoft, GreenInk, "Read and edit project files", "Limited to the selected repository.")
-                    PermissionRow(Icons.Outlined.Check, GreenSoft, GreenInk, "Run tests and linters", "Checks run inside the project sandbox.")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                mode = "permissions"
+                                state.setAgentBehavior("permissions")
+                            }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (mode == "permissions") Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp),
+                            tint = if (mode == "permissions") BlueInk else Muted2
+                        )
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Standard permissions", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text("Default policies: tools auto-run for reads, approval for writes, commands, and commits.", fontSize = 9.5.sp, lineHeight = 13.sp, color = Muted2)
+                        }
+                    }
+                    AdDivider()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                mode = "prompt"
+                                state.setAgentBehavior("prompt")
+                            }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (mode == "prompt") Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp),
+                            tint = if (mode == "prompt") BlueInk else Muted2
+                        )
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("System prompt", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text("Your own instructions are added to every agent session.", fontSize = 9.5.sp, lineHeight = 13.sp, color = Muted2)
+                        }
+                    }
+                    if (mode == "prompt") {
+                        AdDivider()
+                        AdTextField(
+                            value = prompt,
+                            onValueChange = { prompt = it },
+                            placeholder = "e.g. Always answer concisely. Prefer Python 3.12…",
+                            minHeight = 72.dp
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        AdButton(
+                            "Save system prompt",
+                            onClick = { state.setGlobalSystemPrompt(prompt) },
+                            kind = AdButtonKind.OUTLINE,
+                            small = true,
+                            enabled = prompt != state.globalSystemPromptText()
+                        )
+                    }
+                    AdDivider()
+                    PermissionRow(Icons.Outlined.Check, GreenSoft, GreenInk, "Read and edit project files", "Limited to the agent workspace.")
+                    PermissionRow(Icons.Outlined.Check, GreenSoft, GreenInk, "Run tests and linters", "Runs where the platform permits — shell or Termux.")
                     PermissionRow(Icons.Outlined.Shield, AmberSoft, AmberInk, "Install packages or use the network", "Requires your approval for each task.")
-                    PermissionRow(Icons.Outlined.Cloud, VioletSoft, VioletInk, "Cloud analysis is read-only", "Selected code goes to your API. Nothing is changed or run.")
-                    PermissionRow(Icons.Outlined.Code, GreenSoft, GreenInk, "GitHub access is read-only", "Contents and metadata only. No writes, ever.")
                     PermissionRow(Icons.Outlined.Close, RedSoft, RedInk, "Merge, deploy, or change settings", "Never allowed from a task.", isLast = true)
                 }
             }

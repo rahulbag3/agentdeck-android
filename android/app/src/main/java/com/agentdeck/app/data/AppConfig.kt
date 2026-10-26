@@ -20,6 +20,16 @@ class AppConfig(context: Context) {
         set(value) = prefs.edit().putString(KEY_CLOUD_PROFILES, value).apply()
 
     /** Device shell (Termux over loopback SSH) for real toolchains. */
+    /** "permissions" (default policies) or "prompt" (user's global system prompt). */
+    var agentBehavior: String
+        get() = prefs.getString(KEY_AGENT_BEHAVIOR, "permissions").orEmpty()
+        set(value) = prefs.edit().putString(KEY_AGENT_BEHAVIOR, value).apply()
+
+    /** Global system prompt used by agent sessions when behavior is "prompt". */
+    var globalSystemPrompt: String
+        get() = prefs.getString(KEY_GLOBAL_PROMPT, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_GLOBAL_PROMPT, value).apply()
+
     var sshEnabled: Boolean
         get() = prefs.getBoolean(KEY_SSH_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_SSH_ENABLED, value).apply()
@@ -98,6 +108,8 @@ class AppConfig(context: Context) {
         private const val KEY_CLOUD_BASE_URL = "cloud.base-url"
         private const val KEY_CLOUD_PROFILES = "cloud.profiles"
         private const val KEY_ACTIVE_CLOUD_PROFILE = "cloud.active-profile"
+        private const val KEY_AGENT_BEHAVIOR = "agent.behavior"
+        private const val KEY_GLOBAL_PROMPT = "agent.global-prompt"
         private const val KEY_SSH_ENABLED = "ssh.enabled"
         private const val KEY_SSH_PORT = "ssh.port"
         private const val KEY_SSH_USER = "ssh.user"
