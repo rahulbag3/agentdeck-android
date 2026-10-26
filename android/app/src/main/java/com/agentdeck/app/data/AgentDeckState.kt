@@ -2126,6 +2126,20 @@ class AgentDeckState(
             )
             val baseTurns = buildCloudTurns(initial.messages)
             var extraTurns = emptyList<CloudTurn>()
+            var noToolReplies = 0
+            val needleToolsJson = NeedleEngine.toolsJson(
+                listOf(
+                    "web_search" to "Search the web. Arguments: query.",
+                    "web_fetch" to "Fetch a web page by URL. Arguments: url.",
+                    "memory_save" to "Remember a fact about the user. Arguments: text.",
+                    "memory_recall" to "Recall saved facts. Arguments: query.",
+                    "read" to "Read a workspace file. Arguments: path.",
+                    "list" to "List workspace files. Arguments: path.",
+                    "write" to "Write a workspace file (needs approval). Arguments: path.",
+                    "run" to "Run a shell command (needs approval). Arguments: command.",
+                    "git" to "Git status, diff or log. Arguments: action."
+                )
+            )
             // On provider errors (401/429/5xx), fall back to the next saved
             // model of the active profile before giving up.
             val modelCandidates = mutableListOf(cfg.model)
@@ -2160,7 +2174,20 @@ class AgentDeckState(
                     }
                     if (replyText == null) continue
                     extraTurns = extraTurns + CloudTurn("assistant", replyText.take(6_000))
-                    val calls = ToolParser.parse(replyText)
+                    var calls = ToolParser.parse(replyText)
+                    if (calls.isEmpty() && !usingCloud) {
+                        // Small local models often never emit the tool
+                        // protocol; after two bare replies delegate tool
+                        // selection to the Needle engine (grammar-constrained).
+                        noToolReplies++
+                        if (noToolReplies >= 2 && NeedleEngine.supported) {
+                            val userMessage = extraTurns.lastOrNull { it.role == "user" }?.content
+                                ?: initial.prompt
+                            if (NeedleEngine.ensureReady(appContext, needleToolsJson)) {
+                                calls = NeedleEngine.toolCallsFor(userMessage)
+                            }
+                        }
+                    }
                     if (calls.isEmpty()) {
                         finalizeAgentRun(taskId)
                         return@launch

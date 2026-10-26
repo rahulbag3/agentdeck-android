@@ -21,3 +21,11 @@ target_link_libraries(agentdeck_llama PRIVATE
     "${LLAMA_LIBS}/libggml.so"
     "${LLAMA_LIBS}/libggml-base.so"
     log)
+
+# Needle (tool-calling foundation model) — arm64 static engine only.
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    target_include_directories(agentdeck_llama PRIVATE needle)
+    target_sources(agentdeck_llama PRIVATE needle_jni.cpp)
+    target_link_libraries(agentdeck_llama PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/needle/arm64-v8a/libneedle.a")
+endif()
