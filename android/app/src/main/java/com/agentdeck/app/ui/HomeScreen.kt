@@ -125,7 +125,8 @@ fun HomeScreen(state: AgentDeckState) {
                         modelName = state.taskModelName(task),
                         isLocal = state.isLocalTask(task),
                         isCloud = state.isCloudTask(task),
-                        onClick = { state.openTask(task.id) }
+                        onClick = { state.openTask(task.id) },
+                        onDelete = { state.deleteTask(task.id) }
                     )
                 }
             }

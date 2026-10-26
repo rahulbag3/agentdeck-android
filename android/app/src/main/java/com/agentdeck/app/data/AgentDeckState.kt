@@ -735,6 +735,30 @@ class AgentDeckState(
         sheet = null
     }
 
+    /** Deletes a conversation/task and stops any of its running work. */
+    fun deleteTask(taskId: String) {
+        agentJobs.remove(taskId)?.cancel()
+        cloudJobs.remove(taskId)?.cancel()
+        localJobs.remove(taskId)?.cancel()
+        hostJobs.remove(taskId)?.cancel()
+        applyJobs.remove(taskId)?.cancel()
+        checkJobs.remove(taskId)?.cancel()
+        agentApprovals.remove(taskId)
+        localHandles[taskId]?.let { handle ->
+            Thread {
+                LocalEngine.nativeCancel(handle)
+                LocalEngine.nativeFree(handle)
+            }.apply { isDaemon = true }.start()
+        }
+        localHandles.remove(taskId)
+        localStopFlags.remove(taskId)
+        data = data.copy(tasks = data.tasks.filterNot { it.id == taskId })
+        if (screen is Screen.TaskScreen && (screen as Screen.TaskScreen).taskId == taskId) {
+            back()
+        }
+        toast("Conversation deleted")
+    }
+
     /** Mode card tap: creates the session immediately and opens the composer. */
     fun startQuickSession(kind: TaskKind) {
         val m = model(defaultModelId())?.takeIf { it.isReady && (it.isCloud || it.isLocal) }

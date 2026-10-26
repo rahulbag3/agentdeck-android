@@ -772,7 +772,8 @@ fun AdTaskCard(
     modelName: String,
     isLocal: Boolean,
     isCloud: Boolean = false,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     val summary = summarizeChecks(task.checks)
     Surface(
@@ -792,6 +793,24 @@ fun AdTaskCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.width(8.dp))
+                if (onDelete != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .clickable(onClick = onDelete)
+                            .padding(4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Outlined.Delete,
+                            contentDescription = "Delete conversation",
+                            modifier = Modifier.size(14.dp),
+                            tint = Muted2
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
                 StatusPill(task.status)
             }
             Spacer(Modifier.height(5.dp))

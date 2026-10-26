@@ -1140,7 +1140,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                         else -> "Local model not loaded"
                     },
                     actionLabel = if (model == null) null else "Load",
-                    onAction = state::openSettings,
+                    onAction = { model?.id?.let(state::loadLocalModel) },
                     secondLabel = "Change model",
                     onSecond = { state.openTaskModels(task.id) }
                 )
