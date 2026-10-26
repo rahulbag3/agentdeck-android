@@ -39,3 +39,19 @@ emit our `agentdeck-tool` protocol.
 - "search the web for X" on a local model produces a real web_search tool
   event; nonsense prompt produces no tool call (confidence gate ≥ 0.5).
 - Approval flow unchanged; cloud sessions untouched.
+
+## Update (2026-10-27): switch to the official Cactus Android engine
+
+- The user's tools example confirms our JSON schema matches the official
+  format (name/description/parameters/required; optional "triggers" regexes
+  for fast-path matching — worth adding per tool later).
+- **Use the official Android engine instead of the hand-rolled wrapper:**
+  `cactus-compute/cactus` `android/` builds `libcactus_engine.so` via
+  `cactus build --android` (NDK, min API 21, `android/build.sh`) with a ready
+  `cactus_jni.cpp` JNI bridge. Our `needle_jni.cpp` wrapper works for
+  load/init/complete but the official bridge + engine is the maintained path
+  (it also fixes silent init-failure behavior we hit).
+- Next steps: `bash android/build.sh` (needs NDK), swap
+  `libcactus_engine.so` + `cactus_jni.cpp` JNI class names into
+  `NeedleEngine.kt`, keep the same `ToolRegistry` tools JSON, keep telemetry
+  disabled, then re-test "search the web for X" on a local model session.
