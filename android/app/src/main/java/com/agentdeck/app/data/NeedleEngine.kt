@@ -30,12 +30,18 @@ object NeedleEngine {
             runCatching { nativeModels() }.isSuccess
     }
 
+    var lastError: String? = null
+        private set
+
     fun ensureReady(context: Context, toolsJson: String): Boolean {
         if (initialized && ready) return true
-        if (!supported) return false
+        if (!supported) {
+            lastError = "engine not supported on this ABI"
+            return false
+        }
         return synchronized(this) {
             if (initialized && ready) return@synchronized true
-            runCatching {
+            try {
                 val cact = context.assets.open("needle3.cact").use { input ->
                     val buffer = ByteArray(input.available())
                     var read = 0
@@ -46,13 +52,22 @@ object NeedleEngine {
                     }
                     buffer
                 }
-                if (!nativeLoad(cact)) return@synchronized false
+                if (!nativeLoad(cact)) {
+                    lastError = nativeLastError()
+                    return@synchronized false
+                }
                 val indexPath = File(context.cacheDir, "needle-tool-index").absolutePath
-                if (!nativeInit(NEEDLE_SYSTEM_PROMPT, toolsJson, indexPath)) return@synchronized false
+                if (!nativeInit(NEEDLE_SYSTEM_PROMPT, toolsJson, indexPath)) {
+                    lastError = nativeLastError()
+                    return@synchronized false
+                }
                 ready = true
                 initialized = true
                 true
-            }.getOrDefault(false)
+            } catch (e: Throwable) {
+                lastError = "exception: ${e.javaClass.simpleName}: ${e.message?.take(140)}"
+                false
+            }
         }
     }
 
@@ -60,6 +75,11 @@ object NeedleEngine {
     fun toolCallsFor(prompt: String): List<ToolCall> {
         if (!ready) return emptyList()
         val json = runCatching { nativeComplete(prompt, 256) }.getOrNull() ?: return emptyList()
+        com.agentdeck.app.data.Logger.warn(
+            "Needle raw output",
+            null,
+            mapOf("length" to json.length.toString(), "preview" to json.take(300))
+        )
         return parseToolCalls(json)
     }
 
@@ -82,21 +102,72 @@ object NeedleEngine {
         }
     }.getOrDefault(emptyList())
 
-    /** Compact tool catalogue for Needle's static prefix. */
-    fun toolsJson(tools: List<Pair<String, String>>): String {
-        val array = org.json.JSONArray()
-        tools.forEach { (name, description) ->
-            array.put(
-                JSONObject()
-                    .put("name", name)
-                    .put("description", description)
-                    .put(
-                        "parameters",
-                        JSONObject().put("type", "object").put("properties", JSONObject())
-                    )
+    /** Compact tool catalogue with typed parameters for Needle's grammar. */
+    fun toolsJson(): String {
+        fun prop(type: String, description: String) =
+            JSONObject().put("type", type).put("description", description)
+
+        fun arg(name: String, schema: JSONObject) =
+            JSONObject().put(name, schema)
+
+        fun tool(name: String, description: String, required: String, params: JSONObject) =
+            JSONObject()
+                .put("name", name)
+                .put("description", description)
+                .put(
+                    "parameters",
+                    JSONObject()
+                        .put("type", "object")
+                        .put("properties", params)
+                        .put("required", org.json.JSONArray().put(required))
+                )
+
+        return org.json.JSONArray().put(
+            tool(
+                "web_search", "Search the web and return results for a query.", "query",
+                arg("query", prop("string", "The search query text"))
             )
-        }
-        return array.toString()
+        ).put(
+            tool(
+                "web_fetch", "Fetch a web page by URL and return its text.", "url",
+                arg("url", prop("string", "The full http(s) URL of the page"))
+            )
+        ).put(
+            tool(
+                "memory_save", "Save a fact about the user for later.", "text",
+                arg("text", prop("string", "The fact to remember"))
+            )
+        ).put(
+            tool(
+                "memory_recall", "Recall previously saved facts.", "query",
+                arg("query", prop("string", "What to look up in memory"))
+            )
+        ).put(
+            tool(
+                "read", "Read a workspace file. Arguments: path.", "path",
+                arg("path", prop("string", "Workspace-relative file path"))
+            )
+        ).put(
+            tool(
+                "list", "List workspace files in a folder.", "path",
+                arg("path", prop("string", "Workspace-relative folder path"))
+            )
+        ).put(
+            tool(
+                "write", "Write a workspace file (needs user approval).", "path",
+                arg("path", prop("string", "Workspace-relative file path"))
+            )
+        ).put(
+            tool(
+                "run", "Run a shell command (needs user approval).", "command",
+                arg("command", prop("string", "The shell command to run"))
+            )
+        ).put(
+            tool(
+                "git", "Git status, diff or log in the workspace.", "action",
+                arg("action", prop("string", "One of: status, diff, log"))
+            )
+        ).toString()
     }
 
     private const val NEEDLE_SYSTEM_PROMPT =
@@ -107,4 +178,5 @@ object NeedleEngine {
     external fun nativeModels(): Int
     external fun nativeInit(systemPrompt: String, toolsJson: String, toolIndexPath: String): Boolean
     external fun nativeComplete(input: String, maxNewTokens: Int): String
+    external fun nativeLastError(): String
 }

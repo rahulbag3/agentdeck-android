@@ -1934,7 +1934,7 @@ class AgentDeckState(
             }
             updateMessage(taskId, messageId) { it.copy(delivery = DeliveryState.DELIVERED) }
             if (isLocalTask(task)) {
-                if (task.kind == TaskKind.CHAT) runAgentLoop(taskId) else startLocalReply(taskId)
+                runAgentLoop(taskId)
             }
         }
     }
@@ -2154,25 +2154,44 @@ class AgentDeckState(
             val baseTurns = buildCloudTurns(initial.messages)
             var extraTurns = emptyList<CloudTurn>()
             var noToolReplies = 0
-            val needleToolsJson = NeedleEngine.toolsJson(
-                listOf(
-                    "web_search" to "Search the web. Arguments: query.",
-                    "web_fetch" to "Fetch a web page by URL. Arguments: url.",
-                    "memory_save" to "Remember a fact about the user. Arguments: text.",
-                    "memory_recall" to "Recall saved facts. Arguments: query.",
-                    "read" to "Read a workspace file. Arguments: path.",
-                    "list" to "List workspace files. Arguments: path.",
-                    "write" to "Write a workspace file (needs approval). Arguments: path.",
-                    "run" to "Run a shell command (needs approval). Arguments: command.",
-                    "git" to "Git status, diff or log. Arguments: action."
-                )
-            )
             // On provider errors (401/429/5xx), fall back to the next saved
             // model of the active profile before giving up.
             val modelCandidates = mutableListOf(cfg.model)
             activeCloudProfile()?.models?.forEach { if (it !in modelCandidates) modelCandidates.add(it) }
             var candidateIndex = 0
             try {
+                // Local sessions: let Needle pick tools from the user's FIRST
+                // message — small LLMs cannot reliably emit the tool protocol.
+                if (!usingCloud) {
+                    val firstMessage = initial.messages.lastOrNull { it.role == MessageRole.USER }?.text
+                        ?: initial.prompt
+                    if (NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())) {
+                        val preCalls = NeedleEngine.toolCallsFor(firstMessage)
+                        if (preCalls.isNotEmpty()) {
+                            val outcomes = mutableListOf<ToolOutcome>()
+                            for (call in preCalls) {
+                                val outcome = try {
+                                    toolExecutor.execute(projectId, call) { pending ->
+                                        awaitToolApproval(taskId, pending)
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    ToolOutcome(call, "ERROR: ${e.message?.take(140)}")
+                                }
+                                outcomes += outcome
+                                addToolNote(taskId, outcome)
+                            }
+                            extraTurns = extraTurns + CloudTurn("user", ToolParser.resultsText(outcomes))
+                        }
+                    } else {
+                        addSystemNotice(
+                            taskId,
+                            "Needle unavailable",
+                            (NeedleEngine.lastError ?: "init failed").take(200)
+                        )
+                    }
+                }
                 for (step in 0 until MAX_AGENT_STEPS) {
                     currentCoroutineContext().ensureActive()
                     val replyText = if (usingCloud) {
@@ -2210,7 +2229,7 @@ class AgentDeckState(
                         if (noToolReplies >= 2 && NeedleEngine.supported) {
                             val userMessage = extraTurns.lastOrNull { it.role == "user" }?.content
                                 ?: initial.prompt
-                            if (NeedleEngine.ensureReady(appContext, needleToolsJson)) {
+                            if (NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())) {
                                 calls = NeedleEngine.toolCallsFor(userMessage)
                             }
                         }

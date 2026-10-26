@@ -72,7 +72,7 @@ Java_com_agentdeck_app_data_NeedleEngine_nativeComplete(
     jstring input, jint maxNewTokens) {
     if (!g_inited) return toJString(env, "{\"error\":\"not initialized\"}");
     const std::string prompt = toStd(env, input);
-    std::vector<char> out(8192);
+    std::vector<char> out(32768);
     const int result = needle_complete(
         prompt.c_str(), nullptr, 0, maxNewTokens, out.data(), static_cast<int>(out.size()));
     if (result < 0) {
@@ -80,4 +80,9 @@ Java_com_agentdeck_app_data_NeedleEngine_nativeComplete(
         return toJString(env, std::string("{\"error\":\"") + needle_last_error() + "\"}");
     }
     return toJString(env, std::string(out.data()));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_agentdeck_app_data_NeedleEngine_nativeLastError(JNIEnv * env, jobject) {
+    return toJString(env, std::string(needle_last_error() ? needle_last_error() : "unknown"));
 }
