@@ -167,6 +167,8 @@ class AgentDeckState(
     )
     private val agentJobs = mutableMapOf<String, Job>()
     private val agentApprovals = mutableMapOf<String, CompletableDeferred<Boolean>>()
+    /** Set by the last cloud attempt; drives the 429 no-fallback rule. */
+    private var lastCloudRateLimited = false
 
     /** Task ids whose current permission request belongs to a live host run. */
     private val hostPermissions = mutableSetOf<String>()
@@ -2109,6 +2111,7 @@ class AgentDeckState(
         }
 
         agentJobs.remove(taskId)?.cancel()
+        lastCloudRateLimited = false
         agentJobs[taskId] = scope.launch {
             val self = currentCoroutineContext()[Job]
             val cfg = cloudConfig.copy(
@@ -2145,7 +2148,6 @@ class AgentDeckState(
             val modelCandidates = mutableListOf(cfg.model)
             activeCloudProfile()?.models?.forEach { if (it !in modelCandidates) modelCandidates.add(it) }
             var candidateIndex = 0
-            var lastCloudRateLimited = false
             try {
                 for (step in 0 until MAX_AGENT_STEPS) {
                     currentCoroutineContext().ensureActive()
