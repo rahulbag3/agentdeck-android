@@ -155,7 +155,8 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.5")
     implementation("androidx.room:room-ktx:2.8.5")
     ksp("androidx.room:room-compiler:2.8.5")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // OkHttp 5: Happy Eyeballs IPv4/IPv6 fallback fixes connection hangs on flaky networks.
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("androidx.lifecycle:lifecycle-process:2.8.6")
