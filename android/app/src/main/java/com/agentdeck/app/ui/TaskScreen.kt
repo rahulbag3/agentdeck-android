@@ -893,13 +893,13 @@ private fun PermissionCard(state: AgentDeckState, task: Task, request: Permissio
                 onClick = { state.declinePermission(task.id) },
                 modifier = Modifier.weight(1f),
                 kind = AdButtonKind.OUTLINE,
-                enabled = state.canReachHost()
+                enabled = state.canReachHost() || state.pendingAgentApproval(task.id)
             )
             AdButton(
                 "Allow once",
                 onClick = { state.allowPermission(task.id) },
                 modifier = Modifier.weight(1f),
-                enabled = state.canReachHost()
+                enabled = state.canReachHost() || state.pendingAgentApproval(task.id)
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -936,6 +936,7 @@ private fun FailureCard(state: AgentDeckState, task: Task, failure: Failure) {
             )
         }
         Spacer(Modifier.height(11.dp))
+        val hostTask = !state.isCloudTask(task) && !state.isLocalTask(task)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AdButton(
                 "View checks",
@@ -944,14 +945,16 @@ private fun FailureCard(state: AgentDeckState, task: Task, failure: Failure) {
                 kind = AdButtonKind.OUTLINE
             )
             AdButton(
-                "Retry task",
-                onClick = { state.retryTask(task.id) },
+                if (hostTask) "Retry task" else "Retry",
+                onClick = {
+                    if (hostTask) state.retryTask(task.id) else state.retryAgentRun(task.id)
+                },
                 modifier = Modifier.weight(1f),
                 icon = Icons.Outlined.Refresh,
-                enabled = state.canReachHost()
+                enabled = if (hostTask) state.canReachHost() else !state.isTaskBusy(task.id)
             )
         }
-        if (!state.canReachHost()) {
+        if (hostTask && !state.canReachHost()) {
             Spacer(Modifier.height(7.dp))
             Text("Reconnect the host before retrying.", style = AdType.Tiny)
         }

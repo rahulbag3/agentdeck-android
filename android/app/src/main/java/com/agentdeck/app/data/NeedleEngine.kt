@@ -75,32 +75,20 @@ object NeedleEngine {
     fun toolCallsFor(prompt: String): List<ToolCall> {
         if (!ready) return emptyList()
         val json = runCatching { nativeComplete(prompt, 256) }.getOrNull() ?: return emptyList()
-        com.agentdeck.app.data.Logger.warn(
-            "Needle raw output",
-            null,
-            mapOf("length" to json.length.toString(), "preview" to json.take(300))
-        )
-        return parseToolCalls(json)
+        // Needle can only fill arguments; it cannot supply a file body or commit
+        // message, so never let it pick a write/commit (that would blank a file).
+        return parseToolCalls(json).filterNot { call ->
+            call.name == "write" || (call.name == "git" && call.args["action"] == "commit")
+        }
     }
 
-    /** Parses {"function_calls":[{"name","arguments":{...}}]} into ToolCalls. */
-    fun parseToolCalls(json: String): List<ToolCall> = runCatching {
-        val obj = JSONObject(json)
-        val calls = obj.optJSONArray("function_calls") ?: return emptyList()
-        (0 until calls.length()).mapNotNull { index ->
-            val call = calls.optJSONObject(index) ?: return@mapNotNull null
-            val name = call.optString("name").lowercase()
-            if (name.isBlank()) return@mapNotNull null
-            val argsJson = call.optJSONObject("arguments") ?: JSONObject()
-            val args = mutableMapOf<String, String>()
-            val keys = argsJson.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                args[key] = argsJson.optString(key)
-            }
-            ToolCall(name = name, args = args, body = "")
-        }
-    }.getOrDefault(emptyList())
+    /**
+     * Parses {"function_calls":[{"name","arguments"}],"confidence":0.9} into
+     * ToolCalls. Calls below [MIN_CONFIDENCE] are ignored so a nonsense prompt
+     * does not trigger a random tool.
+     */
+    fun parseToolCalls(json: String): List<ToolCall> =
+        ToolParser.parseJsonCalls(json, MIN_CONFIDENCE)
 
     /** Compact tool catalogue with typed parameters for Needle's grammar. */
     fun toolsJson(): String {
@@ -154,11 +142,6 @@ object NeedleEngine {
             )
         ).put(
             tool(
-                "write", "Write a workspace file (needs user approval).", "path",
-                arg("path", prop("string", "Workspace-relative file path"))
-            )
-        ).put(
-            tool(
                 "run", "Run a shell command (needs user approval).", "command",
                 arg("command", prop("string", "The shell command to run"))
             )
@@ -173,6 +156,9 @@ object NeedleEngine {
     private const val NEEDLE_SYSTEM_PROMPT =
         "You choose tools for the user's request on an Android device. " +
             "Return the tool calls that satisfy the request."
+
+    /** Below this confidence the engine's guess is ignored (test criterion: 0.5). */
+    private const val MIN_CONFIDENCE = 0.5
 
     external fun nativeLoad(cact: ByteArray): Boolean
     external fun nativeModels(): Int

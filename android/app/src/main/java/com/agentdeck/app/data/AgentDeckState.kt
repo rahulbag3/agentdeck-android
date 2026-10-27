@@ -1796,8 +1796,8 @@ class AgentDeckState(
                     )
                 }
                 local -> {
-                    startLocalReply(newTask.id)
-                    toast("Local task created · chat on this phone")
+                    runAgentLoop(newTask.id)
+                    toast("Local task created · running on this phone")
                 }
                 else -> {
                     startHostRun(newTask.id)
@@ -2140,7 +2140,7 @@ class AgentDeckState(
      * writes/commands approved by the user) → feed results back, until the
      * model replies without tool calls or the step budget is hit.
      */
-    private fun runAgentLoop(taskId: String) {
+    private fun runAgentLoop(taskId: String, dropTrailingAssistant: Boolean = false) {
         if (agentJobs[taskId]?.isActive == true) return
         val initial = task(taskId) ?: return
         val coding = initial.kind == TaskKind.CODING
@@ -2177,22 +2177,36 @@ class AgentDeckState(
                     "EEE, dd MMM yyyy HH:mm z", java.util.Locale.US
                 ).format(java.util.Date())
             )
-            val baseTurns = buildCloudTurns(initial.messages)
+            val baseTurns = when {
+                usingCloud -> buildCloudTurns(initial.messages, dropTrailingAssistant)
+                dropTrailingAssistant -> buildLocalTurns(initial.messages, dropTrailingAssistant = true)
+                else -> buildLocalTurns(initial.messages)
+            }
             var extraTurns = emptyList<CloudTurn>()
             var noToolReplies = 0
+            var needleDelegations = 0
+            var executedTools = 0
+            var repairs = 0
             // On provider errors (401/429/5xx), fall back to the next saved
             // model of the active profile before giving up.
             val modelCandidates = mutableListOf(cfg.model)
             activeCloudProfile()?.models?.forEach { if (it !in modelCandidates) modelCandidates.add(it) }
             var candidateIndex = 0
             try {
-                // Local sessions: let Needle pick tools from the user's FIRST
-                // message — small LLMs cannot reliably emit the tool protocol.
-                if (!usingCloud) {
-                    val firstMessage = initial.messages.lastOrNull { it.role == MessageRole.USER }?.text
-                        ?: initial.prompt
-                    if (NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())) {
-                        val preCalls = NeedleEngine.toolCallsFor(firstMessage)
+                // Local sessions: let Needle pick tools from the user's latest
+                // request — small LLMs cannot reliably emit the tool protocol.
+                // Skip on retry, so a retry never re-runs a command by itself.
+                if (!usingCloud && !dropTrailingAssistant) {
+                    val firstMessage = initial.messages.lastOrNull {
+                        it.role == MessageRole.USER && !it.text.startsWith("[tool results]")
+                    }?.text ?: initial.prompt
+                    val ready = withContext(Dispatchers.Default) {
+                        NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())
+                    }
+                    if (ready) {
+                        val preCalls = withContext(Dispatchers.Default) {
+                            NeedleEngine.toolCallsFor(firstMessage)
+                        }
                         if (preCalls.isNotEmpty()) {
                             val outcomes = mutableListOf<ToolOutcome>()
                             for (call in preCalls) {
@@ -2208,7 +2222,11 @@ class AgentDeckState(
                                 outcomes += outcome
                                 addToolNote(taskId, outcome)
                             }
-                            extraTurns = extraTurns + CloudTurn("user", ToolParser.resultsText(outcomes))
+                            executedTools += outcomes.size
+                            extraTurns = extraTurns + CloudTurn(
+                                "user",
+                                ToolParser.resultsText(outcomes, LOCAL_RESULT_CAP)
+                            )
                         }
                     } else {
                         addSystemNotice(
@@ -2247,16 +2265,43 @@ class AgentDeckState(
                     if (replyText == null) continue
                     extraTurns = extraTurns + CloudTurn("assistant", replyText.take(6_000))
                     var calls = ToolParser.parse(replyText)
-                    if (calls.isEmpty() && !usingCloud) {
-                        // Small local models often never emit the tool
-                        // protocol; after two bare replies delegate tool
-                        // selection to the Needle engine (grammar-constrained).
+
+                    // The model emitted something that looked like a tool call
+                    // but the parser rejected it. Ask for the exact format
+                    // instead of silently ending the run.
+                    if (calls.isEmpty() && ToolParser.looksLikeToolAttempt(replyText) && repairs < 2) {
+                        repairs++
+                        addSystemNotice(
+                            taskId,
+                            "Tool call not understood",
+                            "Nothing ran: the tool block could not be parsed. Asking the model to retry in the exact format."
+                        )
+                        extraTurns = extraTurns + CloudTurn("user", ToolParser.repairPrompt())
+                        continue
+                    }
+
+                    // Local coding models often answer without emitting the
+                    // protocol at all. Nudge once, then let Needle pick the
+                    // tool from the original request (never from the results
+                    // blob, which would repeat the same call forever).
+                    if (calls.isEmpty() && !usingCloud && coding && executedTools == 0) {
                         noToolReplies++
-                        if (noToolReplies >= 2 && NeedleEngine.supported) {
-                            val userMessage = extraTurns.lastOrNull { it.role == "user" }?.content
-                                ?: initial.prompt
-                            if (NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())) {
-                                calls = NeedleEngine.toolCallsFor(userMessage)
+                        if (noToolReplies == 1) {
+                            extraTurns = extraTurns + CloudTurn("user", ToolParser.nudgePrompt())
+                            continue
+                        }
+                        if (NeedleEngine.supported && needleDelegations < 1) {
+                            val request = initial.messages.lastOrNull {
+                                it.role == MessageRole.USER && !it.text.startsWith("[tool results]")
+                            }?.text ?: initial.prompt
+                            val ready = withContext(Dispatchers.Default) {
+                                NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())
+                            }
+                            if (ready) {
+                                calls = withContext(Dispatchers.Default) {
+                                    NeedleEngine.toolCallsFor(request)
+                                }
+                                if (calls.isNotEmpty()) needleDelegations++
                             }
                         }
                     }
@@ -2276,7 +2321,11 @@ class AgentDeckState(
                         outcomes += outcome
                         addToolNote(taskId, outcome)
                     }
-                    extraTurns = extraTurns + CloudTurn("user", ToolParser.resultsText(outcomes))
+                    executedTools += outcomes.size
+                    extraTurns = extraTurns + CloudTurn(
+                        "user",
+                        ToolParser.resultsText(outcomes, if (usingCloud) RESULTS_CAP_CLOUD else LOCAL_RESULT_CAP)
+                    )
                 }
                 addSystemNotice(
                     taskId,
@@ -2499,12 +2548,23 @@ class AgentDeckState(
         agentApprovals.remove(taskId)
         val now = System.currentTimeMillis()
         updateTask(taskId) { it.copy(permissionRequest = null, updatedAt = now) }
+        if (decision == null) {
+            addSystemNotice(
+                taskId,
+                "Approval timed out",
+                "No answer arrived in time, so the tool request was declined. Send a message to try again."
+            )
+        }
         return decision == true
     }
 
+    /** True while this task waits for an on-device agent tool approval. */
+    fun pendingAgentApproval(taskId: String): Boolean = agentApprovals.containsKey(taskId)
+
     /** Wires the existing approval card to the agent loop. */
     fun respondAgentApproval(taskId: String, allow: Boolean) {
-        agentApprovals[taskId]?.complete(allow) ?: return
+        val deferred = agentApprovals[taskId] ?: return
+        deferred.complete(allow)
         val stamp = System.currentTimeMillis()
         task(taskId)?.permissionRequest?.let { request ->
             updateTask(taskId) {
@@ -2769,185 +2829,6 @@ class AgentDeckState(
             } catch (_: Exception) {
                 // A manual refresh with no results leaves checks untouched.
             }
-        }
-    }
-
-    private fun startLocalReply(taskId: String) {
-        val task = task(taskId) ?: return
-        if (!isLocalTask(task) || taskId in localGenerating) return
-        val imported = importedModels.firstOrNull { it.id == task.modelId }
-        val handle = localHandles[task.modelId]
-        if (imported == null || handle == null) {
-            val now = System.currentTimeMillis()
-            updateTask(taskId) { it.copy(status = TaskStatus.NEEDS_INPUT, updatedAt = now) }
-            addSystemNotice(
-                taskId,
-                "Local model not loaded",
-                "Load this model in Settings → On-device models, then send a message to continue."
-            )
-            return
-        }
-        startRealLocalReply(taskId, imported, handle)
-    }
-
-    /** Streams a real completion from the bundled llama.cpp runtime. */
-    private fun startRealLocalReply(taskId: String, imported: ImportedModel, handle: Long) {
-        val task = task(taskId) ?: return
-        if (taskId in localGenerating) return
-        localJobs.remove(taskId)?.cancel()
-        val stopFlag = AtomicBoolean(false)
-        localStopFlags[taskId] = stopFlag
-        localGenerating = localGenerating + taskId
-        val replyId = newMessageId()
-        val replyModel = model(task.modelId)
-        localJobs[taskId] = scope.launch {
-            val self = currentCoroutineContext()[Job]
-            val start = System.currentTimeMillis()
-            updateTask(taskId) {
-                it.copy(
-                    status = TaskStatus.IN_PROGRESS,
-                    activeRun = true,
-                    failure = null,
-                    updatedAt = start,
-                    activity = it.activity + ActivityEvent("local-engine", "Generating on this phone · ${imported.name}", start)
-                )
-            }
-
-            val buffer = StringBuilder()
-            var added = false
-            var done = false
-            var lastRendered = ""
-            val ticker = launch {
-                while (!done) {
-                    delay(110)
-                    val snapshot = synchronized(buffer) { buffer.toString() }
-                    if (snapshot.isEmpty() || snapshot == lastRendered) continue
-                    lastRendered = snapshot
-                    val now = System.currentTimeMillis()
-                    if (!added) {
-                        added = true
-                        updateTask(taskId) {
-                            it.copy(
-                                messages = it.messages + Message(
-                                    id = replyId,
-                                    role = MessageRole.AGENT,
-                                    text = snapshot,
-                                    at = now,
-                                    localPreview = false,
-                                    modelName = replyModel?.name,
-                                    provider = ModelProvider.LOCAL
-                                ),
-                                updatedAt = now
-                            )
-                        }
-                    } else {
-                        updateMessage(taskId, replyId) { it.copy(text = snapshot, at = now) }
-                        updateTask(taskId) { it.copy(updatedAt = now) }
-                    }
-                }
-            }
-
-            val turns = buildLocalTurns(task.messages)
-            val roles = turns.map { it.role }.toTypedArray()
-            val contents = turns.map { it.content }.toTypedArray()
-            val result = try {
-                withContext(Dispatchers.Default) {
-                    LocalEngine.nativeGenerate(
-                        handle,
-                        LOCAL_SYSTEM_PROMPT,
-                        roles,
-                        contents,
-                        LOCAL_MAX_TOKENS,
-                        0.7f,
-                        0.9f,
-                        object : LocalEngine.TokenCallback {
-                            override fun onToken(text: String): Boolean {
-                                if (stopFlag.get()) return false
-                                synchronized(buffer) { buffer.append(text) }
-                                return true
-                            }
-                        }
-                    )
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Logger.error("Local generation failed", e)
-                -1
-            }
-
-            done = true
-            ticker.cancel()
-            val text = synchronized(buffer) { buffer.toString() }
-            val now = System.currentTimeMillis()
-            if (text.isNotBlank()) {
-                if (added) {
-                    updateMessage(taskId, replyId) { it.copy(text = text, at = now) }
-                } else {
-                    updateTask(taskId) {
-                        it.copy(
-                            messages = it.messages + Message(
-                                id = replyId,
-                                role = MessageRole.AGENT,
-                                text = text,
-                                at = now,
-                                localPreview = false,
-                                modelName = replyModel?.name,
-                                provider = ModelProvider.LOCAL
-                            )
-                        )
-                    }
-                }
-            }
-
-            val stopped = stopFlag.get() || result == -3
-            when {
-                stopped -> updateTask(taskId) {
-                    it.copy(
-                        status = TaskStatus.NEEDS_INPUT,
-                        activeRun = false,
-                        updatedAt = now,
-                        activity = it.activity + ActivityEvent("local-engine", "Stopped by you", now),
-                        messages = it.messages + Message(
-                            id = newMessageId(),
-                            role = MessageRole.SYSTEM,
-                            text = "Generation stopped\nThe partial reply above was kept. Nothing was changed. Send a message to continue.",
-                            at = now
-                        )
-                    )
-                }
-                text.isBlank() -> updateTask(taskId) {
-                    it.copy(
-                        status = TaskStatus.NEEDS_INPUT,
-                        activeRun = false,
-                        updatedAt = now,
-                        messages = it.messages + Message(
-                            id = newMessageId(),
-                            role = MessageRole.SYSTEM,
-                            text = "No reply\nThe local model returned no text (engine code $result). " +
-                                "Try again, or load a different model.",
-                            at = now
-                        )
-                    )
-                }
-                else -> updateTask(taskId) {
-                    it.copy(
-                        status = TaskStatus.NEEDS_INPUT,
-                        activeRun = false,
-                        retryAttempts = 0,
-                        updatedAt = now,
-                        activity = it.activity + ActivityEvent(
-                            "local-engine",
-                            "Answered on this phone · ${imported.name}",
-                            now
-                        )
-                    )
-                }
-            }
-
-            localGenerating = localGenerating - taskId
-            localStopFlags.remove(taskId)
-            if (localJobs[taskId] === self) localJobs.remove(taskId)
         }
     }
 
@@ -3448,6 +3329,23 @@ class AgentDeckState(
             )
         }
         toast("Request declined")
+    }
+
+    /** Retries a cloud/local agent run from the last user turn. */
+    fun retryAgentRun(taskId: String) {
+        val task = task(taskId) ?: return
+        if (task.status != TaskStatus.NEEDS_INPUT || task.failure == null) return
+        if (isTaskBusy(taskId)) return
+        val stamp = System.currentTimeMillis()
+        updateTask(taskId) {
+            it.copy(
+                failure = null,
+                updatedAt = stamp,
+                activity = it.activity + ActivityEvent("status", "Retry requested", stamp)
+            )
+        }
+        runAgentLoop(taskId, dropTrailingAssistant = true)
+        toast("Retry started")
     }
 
     fun retryTask(taskId: String) {
@@ -4046,14 +3944,9 @@ class AgentDeckState(
         private const val LOCAL_CONTEXT_SIZE = 4096
         private const val LOCAL_MAX_TOKENS = 512
         private const val MAX_AGENT_STEPS = 8
-        private const val TOOL_APPROVAL_TIMEOUT_MS = 120_000L
-        private val LOCAL_SYSTEM_PROMPT = """
-            You are the on-device assistant inside AgentDeck, running entirely on the user's phone.
-
-            You can discuss the task, review code in the conversation, and suggest changes. You cannot edit files, run commands, run tests, install packages, or reach the internet from this device.
-
-            Never claim that you changed, ran, or completed anything. Present suggestions as proposals the user can apply themselves. Be concise and practical.
-        """.trimIndent()
+        private const val TOOL_APPROVAL_TIMEOUT_MS = 300_000L
+        private const val RESULTS_CAP_CLOUD = 12_000
+        private const val LOCAL_RESULT_CAP = 2_000
         private val CLOUD_SYSTEM_PROMPT = """
             You are the analysis model inside AgentDeck. You are reached over the user's own API key, directly from their phone.
 

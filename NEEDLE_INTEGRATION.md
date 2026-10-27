@@ -27,9 +27,11 @@ emit our `agentdeck-tool` protocol.
 3. Kotlin `NeedleEngine` (object, mirrors `LocalEngine`): init once with the
    tool registry JSON built from `ToolRegistry`; `run(prompt)` parses the JSON
    into `List<ToolCall>` (reuse ToolCall/ToolExecutor + approval flow).
-4. `runAgentLoop` local path: count consecutive local replies with zero
-   parseable tool blocks; after 2, delegate: Needle(userMessage) → tool calls
-   → ToolExecutor (same approvals) → feed results back to the local LLM.
+4. `runAgentLoop` local path: nudge once with a format reminder; if the next
+   reply still has no parseable tool block, delegate to Needle from the user's
+   latest request → tool calls → ToolExecutor (same approvals) → feed results
+   back to the local LLM. The pre-check is skipped on retry so a retry never
+   re-runs a command.
 5. Tool doc strings must be short and description-rich (Needle uses them as
    the tool descriptions).
 6. Ship toggle: Settings → Agent intelligence → "Needle tools (beta)" with
@@ -55,3 +57,15 @@ emit our `agentdeck-tool` protocol.
   `libcactus_engine.so` + `cactus_jni.cpp` JNI class names into
   `NeedleEngine.kt`, keep the same `ToolRegistry` tools JSON, keep telemetry
   disabled, then re-test "search the web for X" on a local model session.
+
+## Update (2026-10-27, later): reliability guardrails
+
+- `ToolParser.parseJsonCalls(json, 0.5)` is the single JSON entry point; calls
+  below the 0.5 confidence gate are ignored.
+- `ToolRegistry.toolsJson()` no longer offers `write` (Needle cannot supply a
+  file body) and `toolCallsFor` also drops any `write` or `git commit` it
+  emits, so a local fallback can never blank a file.
+- The raw-output diagnostic log was removed — it leaked prompts and tool
+  arguments into Crashlytics.
+- `needle_jni.cpp` now converts standard UTF-8 to UTF-16 before `NewString`
+  (emoji / 4-byte characters previously aborted via modified-UTF-8).

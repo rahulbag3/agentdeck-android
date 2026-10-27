@@ -49,6 +49,19 @@ class CloudTurnsTest {
     }
 
     @Test
+    fun `local retry drops trailing partial assistant turns`() {
+        val messages = listOf(
+            message("u1", MessageRole.USER, "first"),
+            message("a1", MessageRole.AGENT, "partial")
+        )
+
+        assertEquals(
+            listOf(CloudTurn("user", "first")),
+            buildLocalTurns(messages, dropTrailingAssistant = true)
+        )
+    }
+
+    @Test
     fun `system notices and blank messages are excluded`() {
         val messages = listOf(
             message("s1", MessageRole.SYSTEM, "Cloud request failed"),

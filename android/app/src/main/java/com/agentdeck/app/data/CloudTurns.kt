@@ -46,11 +46,19 @@ internal fun buildCloudTurns(
 }
 
 /** Same shape as [buildCloudTurns] with a budget that fits the on-device context. */
-internal fun buildLocalTurns(messages: List<Message>): List<CloudTurn> {
+internal fun buildLocalTurns(
+    messages: List<Message>,
+    dropTrailingAssistant: Boolean = false
+): List<CloudTurn> {
     val filtered = messages.filter {
         (it.role == MessageRole.USER || it.role == MessageRole.AGENT) && it.text.isNotBlank()
     }
-    val history = filtered.takeLast(MAX_LOCAL_TURNS)
+    val selected = if (dropTrailingAssistant) {
+        filtered.dropLastWhile { it.role == MessageRole.AGENT }
+    } else {
+        filtered
+    }
+    val history = selected.takeLast(MAX_LOCAL_TURNS)
     var total = 0
     val turns = ArrayDeque<CloudTurn>()
     for (message in history.asReversed()) {

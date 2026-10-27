@@ -927,6 +927,54 @@ On the `agentdeck` AVD:
 
 - Created a task and let it finish; `adb shell am force-stop com.agentdeck.app` followed by relaunch kept the task, messages, changed files, and checks.
 - Started a host retry and force-stopped at about 1.3 s. Relaunch restored it as `Failed` with a `Run interrupted` failure, an activity event, and a system notice.
+
+---
+
+## 2026-10-27 — tool-calling reliability pass
+
+Root causes fixed (unit-tested; release build verified):
+
+1. **Unclosed fences were dropped** — `ToolParser` required `fence.isClosed`, but
+   models routinely omit the final ```. It now accepts unclosed blocks, single
+   or unquoted arguments, `agentdeck-tool:` and bare `agentdeck-tool` with the
+   name on the next line, batched calls in one fence, and JSON
+   (`function_calls`) / OpenAI (`tool_calls`) shapes.
+2. **XML tool syntax is now parsed** — providers such as dots emit
+   `<dots_function_call><agentdeck-tool"><parameter name="query">…</parameter>`
+   or `<invoke name="read"><parameter name="path">…</parameter></invoke>`.
+   `parseXmlCalls` decodes entities, honours an explicit name, and otherwise
+   infers the tool from its parameters (`query`→web_search, `url`→web_fetch,
+   `command`→run, `pattern`→grep, `action`→git, `content`→write, `path`→read).
+3. **The prompt taught the broken shape** — both system prompts showed examples
+   without closing fences. Every example now closes its block and the rules say
+   so explicitly.
+4. **Malformed attempts ended runs silently** — a tool-looking reply that parses
+   to zero calls now triggers a visible notice and one repair turn (max 2).
+5. **Local first turns bypassed the agent loop** — new local tasks used the
+   legacy `startLocalReply` path whose prompt said tools did not exist. That
+   path and prompt were removed; every local session runs `runAgentLoop` with
+   `buildLocalTurns` and the real agent prompt.
+6. **Needle fallback was unreachable** — the old counter could never reach 2.
+   The loop nudges once, then delegates to Needle; calls are confidence-gated at
+   0.5 and `write`/`commit` are filtered from its catalogue and output.
+7. **Approvals were host-gated** — Allow/Decline were disabled unless a host was
+   connected, so cloud/local tool approvals timed out. Buttons now enable when
+   `pendingAgentApproval(taskId)`; the timeout is 5 minutes with an explicit
+   "Approval timed out" notice.
+8. **Main-thread blocking** — workspace/shell/git/SSH work runs on
+   `Dispatchers.IO`; Needle init and inference run on `Dispatchers.Default`.
+9. **Retry problems** — the Needle pre-check is skipped on retry (no duplicate
+   commands), failure cards are mode-aware (`retryAgentRun` for cloud/local),
+   and retries drop the trailing partial assistant turn.
+10. **Truncated writes** — `ToolCall.truncated` marks blocks with no closing
+    fence; `ToolExecutor` refuses them and returns an actionable error instead of
+    saving a partial file.
+11. **JNI UTF-8** — `needle_jni.cpp` decodes standard UTF-8 to UTF-16 and uses
+    `NewString`, avoiding modified-UTF-8 aborts on emoji/4-byte characters.
+
+Tests: **119 JVM unit tests pass**, including 23 in `ToolParserResilienceTest`
+and the local-retry case in `CloudTurnsTest`. Release APK: `-Psnapdragon`,
+signed, installs in place over `1.0.0-snapdragon`.
 - Streamed a deliberately slow cloud reply through the local mock, then force-stopped mid-stream. Relaunch kept the partial reply, set `Needs input`, and appended a `Cloud analysis interrupted` notice.
 - Seeded `IN_PROGRESS` demo tasks stayed untouched because they have `activeRun = false`; only runs started by the app are recovered.
 - Reinstalling with `adb install -r` preserved the Room database.

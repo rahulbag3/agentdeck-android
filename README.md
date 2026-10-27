@@ -47,7 +47,12 @@ host computer required.
   commit requires your explicit approval. The workspace imports from GitHub
   (codeload zip) and ends each run as a real diff for review. The shell is
   Android's toybox — there is no Node/Python/Gradle toolchain on the device,
-  so test runs belong to CI or your computer.
+  so test runs belong to CI or your computer. Local models run the same agent
+  loop, with Needle as a grammar-constrained fallback for tool selection. The
+  `agentdeck-tool` protocol tolerates missing closing fences, single-quoted or
+  unquoted arguments, and JSON / OpenAI-style calls; an unparseable attempt
+  gets one repair turn instead of silently ending the run, and a write whose
+  block was cut off is refused rather than saved partially.
 - **Real toolchains via Termux** — the on-device shell covers toybox
   utilities natively; enable the Termux bridge in Settings and non-toybox
   commands (`node`, `python`, `gradle`…) execute in Termux's sshd over
@@ -232,7 +237,7 @@ tools/agentdeck-host/
 
 ## Tests
 
-95 JVM unit tests cover:
+119 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
@@ -248,6 +253,9 @@ tools/agentdeck-host/
 - Cloud profile codec round-trips and OpenAI-style `/models` list parsing
 - Agent tool-protocol parsing, workspace path confinement, and unified-diff
   file splitting
+- Resilient tool calls (unclosed fences, quoting variants, batched calls,
+  JSON/OpenAI shapes, XML invoke-style calls, truncated writes, Needle
+  confidence gate) and retry history trimming for local models
 - Imported local model catalogue encoding and tolerant decoding
 
 The host agent has 9 protocol tests (auth, approval, denial, inspection mode,
