@@ -2193,19 +2193,22 @@ class AgentDeckState(
             activeCloudProfile()?.models?.forEach { if (it !in modelCandidates) modelCandidates.add(it) }
             var candidateIndex = 0
             try {
-                // Local sessions: let Needle pick tools from the user's latest
-                // request — small LLMs cannot reliably emit the tool protocol.
+                // Non-coding local sessions: let Needle pick web or memory
+                // tools from the user's latest request. Coding sessions try
+                // the local model first; the fallback below uses the smaller
+                // coding catalogue after the model fails to emit a tool.
                 // Skip on retry, so a retry never re-runs a command by itself.
-                if (!usingCloud && !dropTrailingAssistant) {
+                if (!usingCloud && !coding && !dropTrailingAssistant) {
                     val firstMessage = initial.messages.lastOrNull {
                         it.role == MessageRole.USER && !it.text.startsWith("[tool results]")
                     }?.text ?: initial.prompt
+                    val needleTools = NeedleEngine.toolsJson(coding = false)
                     val ready = withContext(Dispatchers.Default) {
-                        NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())
+                        NeedleEngine.ensureReady(appContext, needleTools)
                     }
                     if (ready) {
                         val preCalls = withContext(Dispatchers.Default) {
-                            NeedleEngine.toolCallsFor(firstMessage)
+                            NeedleEngine.toolCallsFor(appContext, firstMessage, needleTools)
                         }
                         if (preCalls.isNotEmpty()) {
                             val outcomes = mutableListOf<ToolOutcome>()
@@ -2294,14 +2297,21 @@ class AgentDeckState(
                             val request = initial.messages.lastOrNull {
                                 it.role == MessageRole.USER && !it.text.startsWith("[tool results]")
                             }?.text ?: initial.prompt
+                            val needleTools = NeedleEngine.toolsJson(coding = true)
                             val ready = withContext(Dispatchers.Default) {
-                                NeedleEngine.ensureReady(appContext, NeedleEngine.toolsJson())
+                                NeedleEngine.ensureReady(appContext, needleTools)
                             }
                             if (ready) {
                                 calls = withContext(Dispatchers.Default) {
-                                    NeedleEngine.toolCallsFor(request)
+                                    NeedleEngine.toolCallsFor(appContext, request, needleTools)
                                 }
                                 if (calls.isNotEmpty()) needleDelegations++
+                            } else {
+                                addSystemNotice(
+                                    taskId,
+                                    "Needle unavailable",
+                                    (NeedleEngine.lastError ?: "init failed").take(200)
+                                )
                             }
                         }
                     }

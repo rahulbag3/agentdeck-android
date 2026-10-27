@@ -42,7 +42,12 @@ emit our `agentdeck-tool` protocol.
   event; nonsense prompt produces no tool call (confidence gate ≥ 0.5).
 - Approval flow unchanged; cloud sessions untouched.
 
-## Update (2026-10-27): switch to the official Cactus Android engine
+## Update (2026-10-27): Cactus Android engine — superseded, do not apply
+
+> Superseded by the 2026-10-28 verification below. Cactus `android/` builds
+> `libcactus_engine.so`, a different chat engine; it is not Needle. The static
+> `libneedle.a` we already link **is** the official Needle Android artifact.
+> Keep the current integration.
 
 - The user's tools example confirms our JSON schema matches the official
   format (name/description/parameters/required; optional "triggers" regexes
@@ -69,3 +74,146 @@ emit our `agentdeck-tool` protocol.
   arguments into Crashlytics.
 - `needle_jni.cpp` now converts standard UTF-8 to UTF-16 before `NewString`
   (emoji / 4-byte characters previously aborted via modified-UTF-8).
+
+## Update (2026-10-28): official verification and session-scoped use
+
+Verified against the published artifacts and docs, then exercised on-device
+with the official `needle` CLI before changing app code.
+
+### Artifact verification
+
+| Artifact | SHA256 | Result |
+| --- | --- | --- |
+| `app/src/main/assets/needle3.cact` | `C9D915ECA282ED42D1A09B143B592ADB4CC6744FFE2D294ADF5CFC5548170C38` | matches HF `Cactus-Compute/needle3` LFS oid |
+| `app/src/main/cpp/needle/libneedle.a` | `7AA6DE6132A22BF45F5E903425FEB66F159AD46F47FA558921BC4FD02C3A2FA0` | matches `android-arm64/` |
+| `app/src/main/cpp/needle/needle.h` | — | matches the published header |
+
+- **Do not swap to Cactus `android/`.** That tree builds `libcactus_engine.so`,
+  an LLM chat engine with its own JNI bridge. Needle is a separate 35 MB
+  model/runtime, and `libneedle.a` from the same HF folder is the official
+  Android build of it.
+- Keep the code Apache-2.0 attribution and telemetry disabled
+  (`NEEDLE_TELEMETRY=0`, `DO_NOT_TRACK=1`).
+
+### What Needle 3 does and does not do
+
+- No retrieval head. Every declared tool is rendered into the static prefix;
+  `needle_init` returns the tokenized prefix length and fails if it does not
+  fit the context window.
+- Process-global and **not thread-safe** (`needle.h` says so explicitly). One
+  text model per process, one conversation at a time.
+- Output is grammar-constrained JSON:
+  `{"function_calls":[{"name","arguments"}],"reasoning","confidence"}`, plus
+  `suppressed_calls` when the engine withholds a low-confidence call.
+- Official guidance: keep the catalogue at five tools or fewer. A large
+  catalogue measurably degrades routing.
+
+### Catalogue policy (`NeedleEngine.toolsJson`)
+
+Needle only ever selects tools; `ToolExecutor` and the approval flow are
+unchanged. Catalogues are session-scoped and re-initialized when they change:
+
+| Session | Catalogue | Tools |
+| --- | --- | --- |
+| Coding / workspace | 5 | `read`, `list`, `grep`, `run`, `git` |
+| Chat / web | 4 | `web_search`, `web_fetch`, `memory_save`, `memory_recall` |
+
+- `write` and `git commit` are never offered. `toolCallsFor` also filters them
+  (and anything outside the active catalogue) as defence in depth, so a stale
+  or malformed response cannot blank a file or commit on its own.
+- `git.action` is a closed enum: `status`, `diff`, `log`.
+- `grep.pattern` is required; `grep.path` is optional.
+- Descriptions and short regex `triggers` stay factual: Needle uses the
+  descriptions directly and does not follow instructions in the system prompt.
+- Coding sessions **try the local model first**. The five-tool catalogue is a
+  fallback after the model fails to emit a parseable tool. Non-coding local
+  sessions may run the four-tool pre-check up front. The retry path skips the
+  pre-check so a retry cannot re-run a command.
+- If `needle_init` fails, the app posts a "Needle unavailable" notice with the
+  native error instead of silently doing nothing.
+
+### Confidence policy
+
+`MIN_CONFIDENCE = 0.1` in `NeedleEngine`, matching the engine's own
+withholding floor:
+
+- `>= 0.7` — act.
+- `0.1 – 0.7` — confirm. Safe tools may run; dangerous tools still prompt for
+  approval as before.
+- `< 0.1` — the engine puts the call in `suppressed_calls`; never execute it.
+- A 0.5 gate was too high: on-device calls that were correct scored 0.11–0.35
+  and were being discarded.
+
+### Native/JNI rules (`needle_jni.cpp`)
+
+- `needle_reset()` before every one-shot `needle_complete`, so one request
+  cannot bias the next.
+- A native `std::mutex` plus the Kotlin `nativeLock` serialize all calls; the
+  model is process-global.
+- Both directions use standard UTF-8: JNI strings are decoded from UTF-16 and
+  encoded manually (`GetStringUTFChars` is modified UTF-8), and output is
+  decoded to UTF-16 and returned with `NewString`.
+- `nativeLoad` uses `GetByteArrayElements` / `ReleaseByteArrayElements`
+  instead of copying the 35 MB asset into another vector.
+- `tool_index_path` is `null`: the tool index is a Needle 2 feature.
+- `needle_init` is re-run when the active catalogue changes. The static prefix
+  is rebuilt, so a previous session's tools cannot leak into the next.
+
+### On-device CLI evidence
+
+Official `android-arm64/needle` binary, `needle3.cact`, and the catalogues in
+`/data/local/tmp/needle-test` on `10BEC50UTS000UN` (arm64, API 36):
+
+| Prompt | Catalogue | Result | Confidence |
+| --- | --- | --- | --- |
+| find TODO | shared 9-tool | `git action=log` (wrong) | 0.1652 |
+| find TODO | 5-tool rev2 | `grep pattern="source code"` (wrong arg) | 0.0818 |
+| search web latest Kotlin | chat 4 | `web_search` | 0.3519 |
+| weather | chat 4 | `web_search` | 0.2883 |
+| list files | coding 5 | `list` | 0.1434 |
+| read Main.kt | coding 5 | `read` | 0.7705 |
+| git status | coding 5 | `git action=status` | 0.7042 |
+| run gradle test | coding 5 | `run` | 0.7810 |
+| fetch https://… | chat 4 | `web_fetch` | 0.6464 |
+| remember my name | chat 4 | `memory_save` suppressed | 0.0802 |
+
+Takeaways: shared catalogues misroute coding prompts (a `TODO` search picked
+`git log`), and a 0.5 gate discards correct calls. Scoped catalogues fixed the
+tool choice in most cases, but argument quality still varies — "find TODO"
+filled `grep.pattern` with `"source code"` at 0.0818, below the engine floor,
+so the call is correctly withheld and the local model remains the primary
+path for coding sessions.
+
+### Test and build
+
+```powershell
+cd android
+.\gradlew.bat :app:testDebugUnitTest --console=plain
+.\gradlew.bat :app:assembleRelease -Psnapdragon --console=plain
+adb -s 10BEC50UTS000UN install -r app/build/outputs/apk/release/app-release.apk
+```
+
+`ToolParserResilienceTest` now asserts the exact five- and four-tool
+catalogues, the `git` enum, required `grep` arguments, typed required fields,
+the URL trigger, the 0.1 floor, acceptance in the 0.1–0.7 band, and that
+`suppressed_calls` are never executed. Full suite: **126 tests**.
+
+### Device verification (2026-10-28)
+
+Installed over `1.0.0-snapdragon` on `10BEC50UTS000UN` with app data preserved.
+
+- **Chat, 4-tool catalogue:** `needle_load ok: 35335380 bytes, models=1`;
+  `needle_init ok: static prefix 326 tokens`.
+  "search the web for the latest Kotlin release" produced a real
+  `web_search`, and the local Qwen3.5-4B answered from the returned GitHub
+  release pages ("Kotlin 2.4.20 … October 2026").
+- **Coding, 5-tool catalogue:** a coding session made no Needle call up front
+  (by design) and the local model ran `git status` and `list .` itself. When a
+  later coding run fell through to Needle in the same process, the catalogue
+  re-initialized successfully: `needle_init ok: static prefix 456 tokens`
+  (versus 326 for the 4-tool chat catalogue). A fallback case that produces a
+  confident tool call is still worth running end-to-end.
+- The release APK for this build is
+  `dist/agentdeck-snapdragon-1.0.0-needle-scoped.apk` (MD5
+  `741623ecd3a2eaeb59158b1d77988c42`). The previous working build remains at
+  `dist/agentdeck-snapdragon-1.0.0.apk`.

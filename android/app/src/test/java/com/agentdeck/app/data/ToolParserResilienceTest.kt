@@ -1,5 +1,7 @@
 package com.agentdeck.app.data
 
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -103,8 +105,24 @@ class ToolParserResilienceTest {
     }
 
     @Test
-    fun `low confidence needle output is ignored`() {
-        val json = """{"function_calls":[{"name":"run","arguments":{"command":"rm -rf /"}}],"confidence":0.2}"""
+    fun `needle output below the engine floor is ignored`() {
+        val json = """{"function_calls":[{"name":"run","arguments":{"command":"rm -rf /"}}],"confidence":0.05}"""
+
+        assertTrue(NeedleEngine.parseToolCalls(json).isEmpty())
+    }
+
+    @Test
+    fun `moderate confidence needle output is accepted`() {
+        val json = """{"function_calls":[{"name":"web_search","arguments":{"query":"latest Kotlin"}}],"confidence":0.35}"""
+
+        assertEquals("latest Kotlin", NeedleEngine.parseToolCalls(json).single().args["query"])
+    }
+
+    @Test
+    fun `suppressed calls are never auto executed`() {
+        val json = """
+            {"function_calls":[],"suppressed_calls":[{"name":"run","arguments":{"command":"rm -rf /"}}],"confidence":0.02}
+        """.trimIndent()
 
         assertTrue(NeedleEngine.parseToolCalls(json).isEmpty())
     }
@@ -192,11 +210,77 @@ class ToolParserResilienceTest {
     }
 
     @Test
-    fun `needle catalogue never offers write or commit`() {
-        val json = NeedleEngine.toolsJson()
+    fun `needle coding catalogue stays at five tools and never offers write or commit`() {
+        val names = toolNames(NeedleEngine.toolsJson(coding = true))
 
-        assertFalse(json.contains("\"write\""))
-        assertFalse(json.contains("\"commit\""))
+        assertEquals(setOf("read", "list", "grep", "run", "git"), names)
+        assertFalse(names.contains("write"))
+        assertFalse(names.contains("commit"))
+    }
+
+    @Test
+    fun `needle chat catalogue stays at four web and memory tools`() {
+        val names = toolNames(NeedleEngine.toolsJson(coding = false))
+
+        assertEquals(setOf("web_search", "web_fetch", "memory_save", "memory_recall"), names)
+    }
+
+    @Test
+    fun `needle git action is a closed enum without commit`() {
+        val action = toolByName(NeedleEngine.toolsJson(coding = true), "git")
+            .getJSONObject("parameters")
+            .getJSONObject("properties")
+            .getJSONObject("action")
+        val values = action.getJSONArray("enum")
+
+        assertEquals(
+            listOf("status", "diff", "log"),
+            (0 until values.length()).map { values.getString(it) }
+        )
+    }
+
+    @Test
+    fun `needle grep requires a pattern and accepts an optional path`() {
+        val parameters = toolByName(NeedleEngine.toolsJson(coding = true), "grep")
+            .getJSONObject("parameters")
+        val required = parameters.getJSONArray("required")
+
+        assertEquals(listOf("pattern"), (0 until required.length()).map { required.getString(it) })
+        assertTrue(parameters.getJSONObject("properties").has("pattern"))
+        assertTrue(parameters.getJSONObject("properties").has("path"))
+    }
+
+    @Test
+    fun `needle catalogues declare descriptions and typed required arguments`() {
+        for (coding in listOf(true, false)) {
+            val tools = JSONArray(NeedleEngine.toolsJson(coding))
+            for (index in 0 until tools.length()) {
+                val tool = tools.getJSONObject(index)
+                val name = tool.getString("name")
+                assertTrue("$name has no description", tool.getString("description").isNotBlank())
+
+                val parameters = tool.getJSONObject("parameters")
+                val properties = parameters.getJSONObject("properties")
+                val required = parameters.getJSONArray("required")
+                assertTrue("$name has no required argument", required.length() > 0)
+                for (argIndex in 0 until required.length()) {
+                    val arg = required.getString(argIndex)
+                    assertTrue("$name.$arg is not declared", properties.has(arg))
+                    assertTrue(
+                        "$name.$arg has no type",
+                        properties.getJSONObject(arg).getString("type").isNotBlank()
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `needle explicit fetch trigger only matches a url`() {
+        val triggers = toolByName(NeedleEngine.toolsJson(coding = false), "web_fetch")
+            .getJSONArray("triggers")
+
+        assertEquals("https?://", triggers.getString(0))
     }
 
     @Test
@@ -278,5 +362,21 @@ class ToolParserResilienceTest {
         """.trimIndent()
 
         assertTrue(ToolParser.parse(text).isEmpty())
+    }
+
+    private fun toolNames(toolsJson: String): Set<String> {
+        val tools = JSONArray(toolsJson)
+        return (0 until tools.length())
+            .map { tools.getJSONObject(it).getString("name") }
+            .toSet()
+    }
+
+    private fun toolByName(toolsJson: String, name: String): JSONObject {
+        val tools = JSONArray(toolsJson)
+        for (index in 0 until tools.length()) {
+            val tool = tools.getJSONObject(index)
+            if (tool.getString("name") == name) return tool
+        }
+        throw AssertionError("tool $name not found in catalogue")
     }
 }

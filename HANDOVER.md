@@ -955,8 +955,11 @@ Root causes fixed (unit-tested; release build verified):
    path and prompt were removed; every local session runs `runAgentLoop` with
    `buildLocalTurns` and the real agent prompt.
 6. **Needle fallback was unreachable** — the old counter could never reach 2.
-   The loop nudges once, then delegates to Needle; calls are confidence-gated at
-   0.5 and `write`/`commit` are filtered from its catalogue and output.
+   The loop nudges once, then delegates to Needle. Since 2026-10-28 the
+   catalogue is session-scoped (five workspace tools for coding, four
+   web/memory tools for chat), the confidence floor is 0.1 (the engine's own
+   withholding threshold), and `write`/`commit` are filtered from both the
+   catalogue and the output.
 7. **Approvals were host-gated** — Allow/Decline were disabled unless a host was
    connected, so cloud/local tool approvals timed out. Buttons now enable when
    `pendingAgentApproval(taskId)`; the timeout is 5 minutes with an explicit
@@ -969,12 +972,31 @@ Root causes fixed (unit-tested; release build verified):
 10. **Truncated writes** — `ToolCall.truncated` marks blocks with no closing
     fence; `ToolExecutor` refuses them and returns an actionable error instead of
     saving a partial file.
-11. **JNI UTF-8** — `needle_jni.cpp` decodes standard UTF-8 to UTF-16 and uses
-    `NewString`, avoiding modified-UTF-8 aborts on emoji/4-byte characters.
+11. **JNI UTF-8 and thread safety** — `needle_jni.cpp` decodes standard UTF-8
+    to UTF-16 and uses `NewString`, avoiding modified-UTF-8 aborts on
+    emoji/4-byte characters. A native mutex plus a Kotlin lock serialize the
+    process-global model, `needle_reset()` runs before each one-shot
+    completion, and `needle_init` is re-run when the active catalogue changes.
 
-Tests: **119 JVM unit tests pass**, including 23 in `ToolParserResilienceTest`
-and the local-retry case in `CloudTurnsTest`. Release APK: `-Psnapdragon`,
-signed, installs in place over `1.0.0-snapdragon`.
+### 2026-10-28 — Needle official verification
+
+- `needle3.cact` (SHA256 `C9D915EC…170C38`) and `libneedle.a`
+  (`7AA6DE61…2A2FA0`) match the Hugging Face LFS oids; `needle.h` matches.
+  Cactus `android/` builds a different chat engine, so the static
+  `libneedle.a` link stays.
+- Needle 3 has no retrieval head, reads the whole toolset, is process-global
+  and non-thread-safe, and is documented for five tools or fewer.
+- On-device CLI tests: a shared 9-tool catalogue routed "find TODO" to
+  `git log`; correct calls scored 0.11–0.35, so the old 0.5 gate dropped them.
+  See `NEEDLE_INTEGRATION.md` for the full table.
+- `NeedleEngine.toolsJson(coding)` now returns the 5-tool coding catalogue or
+  the 4-tool chat catalogue; coding sessions try the local model first and use
+  Needle only as the fallback. Non-coding sessions may pre-check.
+
+Tests: **126 JVM unit tests pass**, including the scoped-catalogue and
+confidence tests in `ToolParserResilienceTest` and the local-retry case in
+`CloudTurnsTest`. Release APK: `-Psnapdragon`, signed, installs in place over
+`1.0.0-snapdragon`.
 - Streamed a deliberately slow cloud reply through the local mock, then force-stopped mid-stream. Relaunch kept the partial reply, set `Needs input`, and appended a `Cloud analysis interrupted` notice.
 - Seeded `IN_PROGRESS` demo tasks stayed untouched because they have `activeRun = false`; only runs started by the app are recovered.
 - Reinstalling with `adb install -r` preserved the Room database.

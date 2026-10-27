@@ -48,7 +48,10 @@ host computer required.
   (codeload zip) and ends each run as a real diff for review. The shell is
   Android's toybox — there is no Node/Python/Gradle toolchain on the device,
   so test runs belong to CI or your computer. Local models run the same agent
-  loop, with Needle as a grammar-constrained fallback for tool selection. The
+  loop, with Needle as a grammar-constrained fallback for tool selection. Each
+  local session declares a small, session-scoped catalogue (five workspace
+  tools for coding, four web/memory tools for chat); Needle 3 has no retrieval
+  head, so a large catalogue degrades routing. The
   `agentdeck-tool` protocol tolerates missing closing fences, single-quoted or
   unquoted arguments, and JSON / OpenAI-style calls; an unparseable attempt
   gets one repair turn instead of silently ending the run, and a write whose
@@ -237,7 +240,7 @@ tools/agentdeck-host/
 
 ## Tests
 
-119 JVM unit tests cover:
+126 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
@@ -255,7 +258,8 @@ tools/agentdeck-host/
   file splitting
 - Resilient tool calls (unclosed fences, quoting variants, batched calls,
   JSON/OpenAI shapes, XML invoke-style calls, truncated writes, Needle
-  confidence gate) and retry history trimming for local models
+  confidence floor and scoped catalogues) and retry history trimming for local
+  models
 - Imported local model catalogue encoding and tolerant decoding
 
 The host agent has 9 protocol tests (auth, approval, denial, inspection mode,
