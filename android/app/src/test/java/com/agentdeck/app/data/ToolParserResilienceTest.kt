@@ -105,10 +105,13 @@ class ToolParserResilienceTest {
     }
 
     @Test
-    fun `needle output below the engine floor is ignored`() {
-        val json = """{"function_calls":[{"name":"run","arguments":{"command":"rm -rf /"}}],"confidence":0.05}"""
+    fun `engine supplied low confidence triggered call is trusted`() {
+        // The engine withholds < 0.1 into suppressed_calls. A below-floor call
+        // in function_calls means a triggers regex matched, which is the
+        // documented opt-in; re-filtering here would drop it.
+        val json = """{"function_calls":[{"name":"read","arguments":{"path":"Main.kt"}}],"confidence":0.05}"""
 
-        assertTrue(NeedleEngine.parseToolCalls(json).isEmpty())
+        assertEquals("Main.kt", NeedleEngine.parseToolCalls(json).single().args["path"])
     }
 
     @Test
@@ -248,6 +251,32 @@ class ToolParserResilienceTest {
         assertEquals(listOf("pattern"), (0 until required.length()).map { required.getString(it) })
         assertTrue(parameters.getJSONObject("properties").has("pattern"))
         assertTrue(parameters.getJSONObject("properties").has("path"))
+    }
+
+    @Test
+    fun `needle list defaults to the workspace root`() {
+        val path = toolByName(NeedleEngine.toolsJson(coding = true), "list")
+            .getJSONObject("parameters")
+            .getJSONObject("properties")
+            .getJSONObject("path")
+
+        assertEquals(".", path.getString("default"))
+    }
+
+    @Test
+    fun `needle fetch url pattern is compiled from the schema`() {
+        val url = toolByName(NeedleEngine.toolsJson(coding = false), "web_fetch")
+            .getJSONObject("parameters")
+            .getJSONObject("properties")
+            .getJSONObject("url")
+
+        assertEquals("^https?://", url.getString("pattern"))
+    }
+
+    @Test
+    fun `needle memory tools are not trigger forced`() {
+        assertFalse(toolByName(NeedleEngine.toolsJson(coding = false), "memory_save").has("triggers"))
+        assertFalse(toolByName(NeedleEngine.toolsJson(coding = false), "memory_recall").has("triggers"))
     }
 
     @Test

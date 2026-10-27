@@ -97,9 +97,12 @@ with the official `needle` CLI before changing app code.
 
 ### What Needle 3 does and does not do
 
-- No retrieval head. Every declared tool is rendered into the static prefix;
-  `needle_init` returns the tokenized prefix length and fails if it does not
-  fit the context window.
+- Tool retrieval is the one point where the official pages disagree: the
+  repo's `llms.txt` says Needle 3 has no tool-retrieval head and reads the
+  whole toolset, while the Python docs and the tool-design guide say retrieval
+  engages above five tools. We keep every session at five or fewer, so the
+  direct-render path is what runs either way. `needle_init` returns the
+  tokenized prefix length and fails if it does not fit the context window.
 - Process-global and **not thread-safe** (`needle.h` says so explicitly). One
   text model per process, one conversation at a time.
 - Output is grammar-constrained JSON:
@@ -123,8 +126,20 @@ unchanged. Catalogues are session-scoped and re-initialized when they change:
   or malformed response cannot blank a file or commit on its own.
 - `git.action` is a closed enum: `status`, `diff`, `log`.
 - `grep.pattern` is required; `grep.path` is optional.
-- Descriptions and short regex `triggers` stay factual: Needle uses the
-  descriptions directly and does not follow instructions in the system prompt.
+- `list.path` is required but carries a schema default of `.`, so a request
+  that does not name a folder still produces a call instead of being withheld.
+- `web_fetch.url` carries the grammar pattern `^https?://`; an invalid URL is
+  unrepresentable rather than merely discouraged.
+- Descriptions stay factual: Needle reads them literally and does not follow
+  instructions in the system prompt.
+- `triggers` regexes are limited to unambiguous read-only actions: `read`,
+  `list`, `git`, `web_search`, `web_fetch`. `grep`, `run`, `memory_save` and
+  `memory_recall` declare none, because a trigger-forced call with a bad
+  argument is worse than a refusal. On-device, a forced `grep` copied the wrong
+  span (`"source code"` for "find TODO").
+- The system turn is environment facts in the documented form
+  (`device: phone; locale: en-US; ...`), not prose instructions. No date
+  argument exists, so omitting `date` is safe.
 - Coding sessions **try the local model first**. The five-tool catalogue is a
   fallback after the model fails to emit a parseable tool. Non-coding local
   sessions may run the four-tool pre-check up front. The retry path skips the
@@ -134,13 +149,17 @@ unchanged. Catalogues are session-scoped and re-initialized when they change:
 
 ### Confidence policy
 
-`MIN_CONFIDENCE = 0.1` in `NeedleEngine`, matching the engine's own
-withholding floor:
+The engine applies the 0.1 floor before the app sees the response:
 
-- `>= 0.7` — act.
-- `0.1 – 0.7` — confirm. Safe tools may run; dangerous tools still prompt for
-  approval as before.
-- `< 0.1` — the engine puts the call in `suppressed_calls`; never execute it.
+- `function_calls` non-empty — trust the engine. `>= 0.7` acts; the 0.1–0.7
+  band confirms. Safe tools may run, dangerous tools still prompt.
+- A `function_calls` entry below 0.1 only survives when a `triggers` regex
+  matched. That is the documented opt-in, so the parser does not re-filter it.
+  Memory tools deliberately declare no triggers, which keeps the bypass on
+  read-only workspace/web tools and `run` (which still needs approval).
+- `function_calls` empty and `suppressed_calls` present — treat the turn as a
+  refusal. Suppressed calls are never parsed or executed.
+- Both empty — refusal.
 - A 0.5 gate was too high: on-device calls that were correct scored 0.11–0.35
   and were being discarded.
 
@@ -155,7 +174,11 @@ withholding floor:
   decoded to UTF-16 and returned with `NewString`.
 - `nativeLoad` uses `GetByteArrayElements` / `ReleaseByteArrayElements`
   instead of copying the 35 MB asset into another vector.
-- `tool_index_path` is `null`: the tool index is a Needle 2 feature.
+- `tool_index_path` is `null`: the repo's `llms.txt` lists it as a Needle 2
+  feature, and our catalogues never exceed five tools.
+- Telemetry is disabled before the engine initializes:
+  `NEEDLE_TELEMETRY=0` and `DO_NOT_TRACK=1` are set in `AgentDeckApplication`
+  and again in `nativeLoad`.
 - `needle_init` is re-run when the active catalogue changes. The static prefix
   is rebuilt, so a previous session's tools cannot leak into the next.
 
@@ -195,8 +218,9 @@ adb -s 10BEC50UTS000UN install -r app/build/outputs/apk/release/app-release.apk
 
 `ToolParserResilienceTest` now asserts the exact five- and four-tool
 catalogues, the `git` enum, required `grep` arguments, typed required fields,
-the URL trigger, the 0.1 floor, acceptance in the 0.1–0.7 band, and that
-`suppressed_calls` are never executed. Full suite: **126 tests**.
+`list.path`'s `.` default, the `web_fetch.url` grammar pattern, engine-supplied
+low-confidence calls being trusted, acceptance in the 0.1–0.7 band, and that
+`suppressed_calls` are never executed. Full suite: **129 tests**.
 
 ### Device verification (2026-10-28)
 
@@ -217,3 +241,19 @@ Installed over `1.0.0-snapdragon` on `10BEC50UTS000UN` with app data preserved.
   `dist/agentdeck-snapdragon-1.0.0-needle-scoped.apk` (MD5
   `741623ecd3a2eaeb59158b1d77988c42`). The previous working build remains at
   `dist/agentdeck-snapdragon-1.0.0.apk`.
+
+### Audit-build verification (2026-10-28, later)
+
+Rebuilt after the official-docs audit and installed over the same data:
+
+- `AgentDeckNeedle: telemetry disabled for Needle` appears before
+  `needle_load ok: 35335380 bytes, models=1`, confirming the opt-out lands
+  before engine init.
+- The 4-tool chat catalogue now initializes at **314 tokens** (down from 326)
+  after the system turn was reduced to environment facts.
+- "search the web for the Android 16 release date" produced
+  `web_search "Android 16 release date official"`, the tool completed, and
+  Qwen3.5-4B summarized the returned pages. Full suite: **129 tests, 0
+  failures**.
+- This build is `dist/agentdeck-snapdragon-1.0.0-needle-audit.apk` (MD5
+  `48d8fdce74ad0f360c4965a45c2708cd`).

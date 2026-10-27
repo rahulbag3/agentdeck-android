@@ -240,7 +240,7 @@ tools/agentdeck-host/
 
 ## Tests
 
-126 JVM unit tests cover:
+129 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
@@ -257,8 +257,8 @@ tools/agentdeck-host/
 - Agent tool-protocol parsing, workspace path confinement, and unified-diff
   file splitting
 - Resilient tool calls (unclosed fences, quoting variants, batched calls,
-  JSON/OpenAI shapes, XML invoke-style calls, truncated writes, Needle
-  confidence floor and scoped catalogues) and retry history trimming for local
+  JSON/OpenAI shapes, XML invoke-style calls, truncated writes, engine-scored
+  Needle confidence and scoped catalogues) and retry history trimming for local
   models
 - Imported local model catalogue encoding and tolerant decoding
 

@@ -119,12 +119,13 @@ object NeedleEngine {
 
     /**
      * Parses {"function_calls":[{"name","arguments"}],"confidence":0.9} into
-     * ToolCalls. Calls below [MIN_CONFIDENCE] are ignored. The engine already
-     * withholds calls below 0.1 into `suppressed_calls`; this floor keeps a
-     * malformed or hand-written JSON response from smuggling one through.
+     * ToolCalls. The engine already applies the 0.1 floor: below-floor calls
+     * are withheld into `suppressed_calls`. A below-floor `function_call` only
+     * survives when a `triggers` regex matched, which is the documented opt-in,
+     * so re-filtering here would silently break triggered routing. Suppressed
+     * calls are never parsed or executed.
      */
-    fun parseToolCalls(json: String): List<ToolCall> =
-        ToolParser.parseJsonCalls(json, MIN_CONFIDENCE)
+    fun parseToolCalls(json: String): List<ToolCall> = ToolParser.parseJsonCalls(json)
 
     private fun filterCalls(calls: List<ToolCall>, names: Set<String>): List<ToolCall> =
         calls.filter { call ->
@@ -165,7 +166,7 @@ object NeedleEngine {
                     prop(
                         "string",
                         "workspace-relative folder path; use . for the workspace root, or a folder name such as src"
-                    )
+                    ).put("default", ".")
                 ),
                 listOf(LIST_TRIGGER)
             )
@@ -182,8 +183,7 @@ object NeedleEngine {
                             "string",
                             "workspace-relative folder or file to search; use . for the whole workspace"
                         )
-                    ),
-                listOf(GREP_TODO_TRIGGER, GREP_ACTION_TRIGGER)
+                    )
             )
         ).put(
             tool(
@@ -196,8 +196,7 @@ object NeedleEngine {
                         "string",
                         "the exact shell command to run, copied as written, for example ./gradlew test"
                     )
-                ),
-                listOf(RUN_TRIGGER)
+                )
             )
         ).put(
             tool(
@@ -232,7 +231,10 @@ object NeedleEngine {
                 listOf("url"),
                 JSONObject().put(
                     "url",
-                    prop("string", "full http(s) URL, for example https://example.com/page")
+                    prop(
+                        "string",
+                        "full http(s) URL, for example https://example.com/page"
+                    ).put("pattern", "^https?://")
                 ),
                 listOf(FETCH_TRIGGER)
             )
@@ -241,16 +243,14 @@ object NeedleEngine {
                 "memory_save",
                 "Save one durable fact about the user, such as a name, preference, or project detail, for later sessions.",
                 listOf("text"),
-                JSONObject().put("text", prop("string", "the fact to remember, as one sentence")),
-                listOf(SAVE_TRIGGER)
+                JSONObject().put("text", prop("string", "the fact to remember, as one sentence"))
             )
         ).put(
             tool(
                 "memory_recall",
                 "Look up facts saved about the user in earlier sessions.",
                 listOf("query"),
-                JSONObject().put("query", prop("string", "words describing the fact to look up")),
-                listOf(RECALL_TRIGGER)
+                JSONObject().put("query", prop("string", "words describing the fact to look up"))
             )
         ).toString()
 
@@ -287,32 +287,21 @@ object NeedleEngine {
     }.getOrDefault(emptySet())
 
     /**
-     * Facts for the static prefix. Needle reads these literally; instructions
-     * do not steer decoding, so keep the environment factual and let the tool
-     * schemas describe the actions.
+     * Environment facts for the static prefix. Needle recognises `date`,
+     * `locale`, `device`, `battery`, `network`, `location`, `user` and
+     * `assistant`; instructions placed here do not steer decoding. We declare
+     * no date arguments, so omitting `date` is safe.
      */
     private const val NEEDLE_SYSTEM_PROMPT =
-        "Environment: Android phone; workspace: a project directory on the device; " +
-            "paths: workspace-relative; shell: POSIX sh. The declared tools are the " +
-            "complete set available for this request."
-
-    /** Matches the engine's own withholding floor (calls below 0.1 are suppressed). */
-    private const val MIN_CONFIDENCE = 0.1
+        "device: phone; locale: en-US; workspace: project directory on the device; shell: POSIX sh"
 
     private const val READ_TRIGGER =
         """\b(read|open|cat|show)\b[\s\S]*\b(file|\.kt|\.kts|\.md|\.json|\.txt|\.gradle|\.xml|\.java|\.py|\.js|\.ts)\b"""
     private const val LIST_TRIGGER =
         """\b(list|show|what(?:'s| is) in)\b[\s\S]*\b(files?|folder|directory)\b"""
-    private const val GREP_TODO_TRIGGER = """\b(TODO|FIXME|HACK)\b"""
-    private const val GREP_ACTION_TRIGGER =
-        """\b(grep|search|find|look for)\b[\s\S]*\b(files?|code|source|workspace|comments?)\b"""
-    private const val RUN_TRIGGER =
-        """\b(run|execute)\b[\s\S]*\b(command|shell|script|gradle|test|build|ls|echo)\b"""
     private const val GIT_TRIGGER = """\bgit\b"""
     private const val SEARCH_TRIGGER = """\b(search|google)\b[\s\S]*\b(web|internet|online)\b"""
     private const val FETCH_TRIGGER = """https?://"""
-    private const val SAVE_TRIGGER = """\b(remember|save|note)\b[\s\S]*\b(that|this|my|i)\b"""
-    private const val RECALL_TRIGGER = """\b(what do you remember|recall|memory)\b"""
 
     external fun nativeLoad(cact: ByteArray): Boolean
     external fun nativeModels(): Int

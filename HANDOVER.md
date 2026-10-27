@@ -957,9 +957,9 @@ Root causes fixed (unit-tested; release build verified):
 6. **Needle fallback was unreachable** — the old counter could never reach 2.
    The loop nudges once, then delegates to Needle. Since 2026-10-28 the
    catalogue is session-scoped (five workspace tools for coding, four
-   web/memory tools for chat), the confidence floor is 0.1 (the engine's own
-   withholding threshold), and `write`/`commit` are filtered from both the
-   catalogue and the output.
+   web/memory tools for chat), the parser trusts the engine's own 0.1
+   withholding, and `write`/`commit` are filtered from both the catalogue and
+   the output.
 7. **Approvals were host-gated** — Allow/Decline were disabled unless a host was
    connected, so cloud/local tool approvals timed out. Buttons now enable when
    `pendingAgentApproval(taskId)`; the timeout is 5 minutes with an explicit
@@ -984,19 +984,30 @@ Root causes fixed (unit-tested; release build verified):
   (`7AA6DE61…2A2FA0`) match the Hugging Face LFS oids; `needle.h` matches.
   Cactus `android/` builds a different chat engine, so the static
   `libneedle.a` link stays.
-- Needle 3 has no retrieval head, reads the whole toolset, is process-global
-  and non-thread-safe, and is documented for five tools or fewer.
+- The official pages disagree on retrieval: the repo's `llms.txt` says Needle 3
+  has no retrieval head and reads the whole toolset, while the Python docs and
+  tool-design guide say retrieval engages above five tools. Every session stays
+  at five or fewer, so the direct-render path applies either way. Needle is
+  process-global and non-thread-safe.
 - On-device CLI tests: a shared 9-tool catalogue routed "find TODO" to
   `git log`; correct calls scored 0.11–0.35, so the old 0.5 gate dropped them.
+  A forced `grep` trigger copied the wrong span, so triggers now cover only
+  `read`, `list`, `git`, `web_search` and `web_fetch`.
   See `NEEDLE_INTEGRATION.md` for the full table.
 - `NeedleEngine.toolsJson(coding)` now returns the 5-tool coding catalogue or
   the 4-tool chat catalogue; coding sessions try the local model first and use
   Needle only as the fallback. Non-coding sessions may pre-check.
+- The parser trusts `function_calls` as delivered: the engine already withholds
+  calls below 0.1 into `suppressed_calls`, and a below-floor call only survives
+  a trigger match. `list.path` defaults to `.`, `web_fetch.url` is constrained
+  to `^https?://`, and the system turn is environment facts, not instructions.
+- Telemetry is opted out before init (`NEEDLE_TELEMETRY=0`,
+  `DO_NOT_TRACK=1`) in `AgentDeckApplication` and again in `nativeLoad`.
 
-Tests: **126 JVM unit tests pass**, including the scoped-catalogue and
-confidence tests in `ToolParserResilienceTest` and the local-retry case in
-`CloudTurnsTest`. Release APK: `-Psnapdragon`, signed, installs in place over
-`1.0.0-snapdragon`.
+Tests: **129 JVM unit tests pass**, including the scoped-catalogue,
+engine-confidence and trigger-scope tests in `ToolParserResilienceTest` and the
+local-retry case in `CloudTurnsTest`. Release APK: `-Psnapdragon`, signed,
+installs in place over `1.0.0-snapdragon`.
 - Streamed a deliberately slow cloud reply through the local mock, then force-stopped mid-stream. Relaunch kept the partial reply, set `Needs input`, and appended a `Cloud analysis interrupted` notice.
 - Seeded `IN_PROGRESS` demo tasks stayed untouched because they have `activeRun = false`; only runs started by the app are recovered.
 - Reinstalling with `adb install -r` preserved the Room database.

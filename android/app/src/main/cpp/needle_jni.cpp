@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -164,6 +165,13 @@ Java_com_agentdeck_app_data_NeedleEngine_nativeLoad(
     std::lock_guard<std::mutex> lock(g_mutex);
     const jsize size = env->GetArrayLength(cact);
     if (size <= 0) return JNI_FALSE;
+
+    // The engine opts into anonymous telemetry unless these are set before it
+    // initializes. App.onCreate also sets them; repeat here so any JNI caller
+    // gets the same behaviour.
+    setenv("NEEDLE_TELEMETRY", "0", 1);
+    setenv("DO_NOT_TRACK", "1", 1);
+    LOGI("telemetry disabled for Needle");
 
     // GetByteArrayElements pins the existing array where the VM allows it,
     // avoiding the extra 35 MB vector copy the old wrapper made. The engine
