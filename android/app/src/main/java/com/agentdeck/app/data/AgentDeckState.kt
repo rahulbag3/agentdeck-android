@@ -2572,18 +2572,7 @@ class AgentDeckState(
                 changedFiles = changed,
                 updatedAt = now,
                 failure = null,
-                plan = completePlan(it.plan),
-                messages = it.messages + Message(
-                    id = newMessageId(),
-                    role = MessageRole.SYSTEM,
-                    text = if (changed.isEmpty()) {
-                        "Agent run finished · no file changes."
-                    } else {
-                        "Agent run finished · ${changed.size} file${if (changed.size == 1) "" else "s"} changed. " +
-                            "Review them in the Changes tab."
-                    },
-                    at = now
-                )
+                plan = completePlan(it.plan)
             )
         }
         if (changed.isNotEmpty()) {

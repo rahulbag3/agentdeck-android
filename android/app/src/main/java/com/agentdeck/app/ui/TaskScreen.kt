@@ -9,6 +9,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Dns
@@ -579,6 +581,11 @@ private fun MessageBlock(
             }
         }
         Spacer(Modifier.height(3.dp))
+        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+        val copyText = {
+            clipboard.setText(androidx.compose.ui.text.AnnotatedString(message.text))
+            state.notifyUser("Copied to clipboard")
+        }
         if (message.role == MessageRole.AGENT) {
             // Local models (Qwen etc.) emit markdown and reasoning blocks too.
             val clean = message.text
@@ -587,10 +594,38 @@ private fun MessageBlock(
                 .trim()
             MarkdownText(clean.ifBlank { message.text.trim() }, Modifier.fillMaxWidth())
         } else {
-            Text(message.text, fontSize = 12.5.sp, lineHeight = 19.sp, color = Ink)
+            Text(
+                message.text,
+                fontSize = 12.5.sp,
+                lineHeight = 19.sp,
+                color = Ink,
+                modifier = Modifier.combinedClickable(onClick = {}, onLongClick = copyText)
+            )
         }
         Spacer(Modifier.height(4.dp))
-        Text(clockTime(message.at), fontSize = 9.sp, color = Muted2)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(clockTime(message.at), fontSize = 9.sp, color = Muted2)
+            if (message.role == MessageRole.AGENT) {
+                Icon(
+                    Icons.Outlined.CheckCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(10.dp),
+                    tint = GreenInk
+                )
+            }
+            val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+            Icon(
+                Icons.Outlined.ContentCopy,
+                contentDescription = "Copy message",
+                modifier = Modifier
+                    .size(11.dp)
+                    .clickable {
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(message.text))
+                        state.notifyUser("Copied to clipboard")
+                    },
+                tint = Muted2
+            )
+        }
     }
 }
 
