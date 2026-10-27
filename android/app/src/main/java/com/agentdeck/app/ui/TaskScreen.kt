@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.CallSplit
@@ -511,23 +512,67 @@ private fun MessageBlock(
         val lines = message.text.lines()
         val title = lines.firstOrNull().orEmpty()
         val body = lines.drop(1).joinToString("\n").trim()
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            color = AmberSoft,
-            border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEEDaAB))
-        ) {
-            Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.Top) {
-                Icon(Icons.Outlined.Warning, contentDescription = null, modifier = Modifier.size(14.dp), tint = AmberInk)
-                Spacer(Modifier.width(7.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = AmberInk)
-                    if (body.isNotBlank()) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(body, fontSize = 10.5.sp, lineHeight = 15.sp, color = AmberInk.copy(alpha = 0.88f))
+        if (title.startsWith("\u2699")) {
+            val label = title.removePrefix("\u2699 ").trim()
+            val ok = label.contains("\u2192")
+            val name = label.substringBefore("\u2192").substringBefore("\u2717").trim()
+            val result = label.substringAfter("\u2192", "").substringAfter("\u2717", "").trim()
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = AdSurface,
+                border = BorderStroke(1.dp, Line)
+            ) {
+                Column(Modifier.padding(horizontal = 11.dp, vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Outlined.Build,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = if (ok) GreenInk else RedInk
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(name, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Ink, modifier = Modifier.weight(1f))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (ok) GreenSoft else RedSoft
+                        ) {
+                            Text(
+                                if (ok) "Done" else "Failed",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (ok) GreenInk else RedInk,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    if (result.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(result, fontSize = 10.sp, lineHeight = 14.sp, color = Muted, maxLines = 3)
                     }
                     Spacer(Modifier.height(3.dp))
-                    Text(clockTime(message.at), fontSize = 8.5.sp, color = AmberInk.copy(alpha = 0.65f))
+                    Text(clockTime(message.at), fontSize = 8.5.sp, color = Muted2)
+                }
+            }
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = AmberSoft,
+                border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEEDaAB))
+            ) {
+                Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Outlined.Warning, contentDescription = null, modifier = Modifier.size(14.dp), tint = AmberInk)
+                    Spacer(Modifier.width(7.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(title, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = AmberInk)
+                        if (body.isNotBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(body, fontSize = 10.5.sp, lineHeight = 15.sp, color = AmberInk.copy(alpha = 0.88f))
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        Text(clockTime(message.at), fontSize = 8.5.sp, color = AmberInk.copy(alpha = 0.65f))
+                    }
                 }
             }
         }
@@ -540,15 +585,15 @@ private fun MessageBlock(
                 horizontalAlignment = Alignment.End
             ) {
                 Surface(
-                    color = Surface3,
-                    shape = RoundedCornerShape(topStart = 15.dp, topEnd = 15.dp, bottomStart = 15.dp, bottomEnd = 4.dp)
+                    color = Ink,
+                    shape = RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp)
                 ) {
                     Text(
                         message.text,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
                         fontSize = 12.5.sp,
                         lineHeight = 19.sp,
-                        color = Ink
+                        color = androidx.compose.ui.graphics.Color(0xFFF3F5F7)
                     )
                 }
                 Spacer(Modifier.height(4.dp))
@@ -567,12 +612,12 @@ private fun MessageBlock(
         else -> ModelProvider.HOST
     }
     Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
                 message.modelName ?: "Agent",
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = Ink
+                fontSize = 9.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Muted2
             )
             when (provider) {
                 ModelProvider.CLOUD -> CloudChip()
@@ -1234,15 +1279,18 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                     onAction = state::reconnectHost
                 )
             }
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Surface2)
+                    .border(1.dp, Line, RoundedCornerShape(20.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 40.dp, max = 100.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Surface2)
-                        .border(1.dp, Line, RoundedCornerShape(16.dp))
-                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                        .fillMaxWidth()
+                        .heightIn(min = 36.dp, max = 120.dp)
                 ) {
                     if (text.isEmpty()) {
                         Text(
@@ -1265,78 +1313,76 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                         cursorBrush = SolidColor(BlueInk)
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(
-                            when {
-                                streaming -> RedSoft
-                                canSend -> Ink
-                                else -> androidx.compose.ui.graphics.Color(0xFFE2E5E9)
-                            }
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .clickable(enabled = switchable && !busy) { state.openTaskModels(task.id) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            state.taskModelName(task),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = InkSoft,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 200.dp)
                         )
-                        .clickable(enabled = streaming || canSend) {
-                            when {
-                                streamingCloud -> state.stopCloudReply(task.id)
-                                streamingHost -> state.stopHostRun(task.id)
-                                streamingLocal -> state.stopLocalReply(task.id)
-                                else -> send()
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    when {
-                        streaming -> Icon(
-                            Icons.Outlined.Stop,
-                            contentDescription = if (streamingHost) "Stop host run" else "Stop generation",
-                            modifier = Modifier.size(17.dp),
-                            tint = RedInk
-                        )
-                        busy -> CircularProgressIndicator(
-                            modifier = Modifier.size(15.dp),
-                            strokeWidth = 2.dp,
-                            color = Muted
-                        )
-                        else -> Icon(
-                            Icons.Outlined.Send,
-                            contentDescription = "Send message",
-                            modifier = Modifier.size(16.dp),
-                            tint = if (canSend) AdSurface else androidx.compose.ui.graphics.Color(0xFFA6ACB3)
-                        )
+                        if (switchable) {
+                            Spacer(Modifier.width(3.dp))
+                            Icon(
+                                Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = "Change model",
+                                modifier = Modifier.size(11.dp),
+                                tint = if (busy) Muted2 else BlueInk
+                            )
+                        }
                     }
-                }
-            }
-            Spacer(Modifier.height(5.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(5.dp))
-                    .clickable(enabled = switchable && !busy) { state.openTaskModels(task.id) }
-                    .padding(vertical = 1.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    state.taskModelName(task),
-                    fontSize = 8.5.sp,
-                    color = Muted2,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (switchable) {
-                    Text(
-                        "Change",
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (busy) Muted2 else BlueInk
-                    )
-                    Icon(
-                        Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = "Change model",
-                        modifier = Modifier.size(11.dp),
-                        tint = if (busy) Muted2 else BlueInk
-                    )
+                    Spacer(Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when {
+                                    streaming -> RedSoft
+                                    canSend -> Ink
+                                    else -> androidx.compose.ui.graphics.Color(0xFFE2E5E9)
+                                }
+                            )
+                            .clickable(enabled = streaming || canSend) {
+                                when {
+                                    streamingCloud -> state.stopCloudReply(task.id)
+                                    streamingHost -> state.stopHostRun(task.id)
+                                    streamingLocal -> state.stopLocalReply(task.id)
+                                    else -> send()
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            streaming -> Icon(
+                                Icons.Outlined.Stop,
+                                contentDescription = if (streamingHost) "Stop host run" else "Stop generation",
+                                modifier = Modifier.size(16.dp),
+                                tint = RedInk
+                            )
+                            busy -> CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = Muted
+                            )
+                            else -> Icon(
+                                Icons.Outlined.Send,
+                                contentDescription = "Send message",
+                                modifier = Modifier.size(15.dp),
+                                tint = if (canSend) AdSurface else androidx.compose.ui.graphics.Color(0xFFA6ACB3)
+                            )
+                        }
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
