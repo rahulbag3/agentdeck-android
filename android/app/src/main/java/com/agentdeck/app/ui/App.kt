@@ -6,6 +6,16 @@ import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -22,11 +32,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,6 +66,10 @@ import com.agentdeck.app.data.Screen
 import com.agentdeck.app.ui.theme.AmberInk
 import com.agentdeck.app.ui.theme.AmberSoft
 import com.agentdeck.app.ui.theme.Canvas
+import com.agentdeck.app.ui.theme.Surface as AdSurface
+import com.agentdeck.app.ui.theme.BlueInk
+import com.agentdeck.app.ui.theme.Ink
+import com.agentdeck.app.ui.theme.Line
 import com.agentdeck.app.ui.theme.Ink
 import com.agentdeck.app.ui.theme.Muted
 import com.agentdeck.app.ui.theme.Surface2
@@ -73,12 +86,13 @@ class AgentDeckViewModel(application: Application) : AndroidViewModel(applicatio
 @Composable
 fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
     val state = viewModel.state
-    val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(state.toastEvent) {
-        val event = state.toastEvent ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(event.text)
-        state.consumeToast()
+    val toastEvent = state.toastEvent
+    LaunchedEffect(toastEvent?.id) {
+        if (toastEvent != null) {
+            delay(2800)
+            state.consumeToast()
+        }
     }
 
     if (state.locked) {
@@ -156,12 +170,17 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
                 }
             }
         }
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 16.dp, vertical = 88.dp)
-        )
+        AnimatedVisibility(
+            visible = toastEvent != null,
+            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            FloatingToast(
+                text = toastEvent?.text.orEmpty(),
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 92.dp)
+            )
+        }
     }
 
     if (state.sheet != null) {
@@ -309,5 +328,39 @@ private fun OfflinePill(modifier: Modifier = Modifier) {
             color = AmberInk,
             modifier = Modifier.padding(start = 4.dp)
         )
+    }
+}
+
+
+@Composable
+private fun FloatingToast(text: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 420.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = AdSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Line),
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Outlined.CheckCircle,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = BlueInk
+            )
+            Spacer(Modifier.width(9.dp))
+            Text(
+                text,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = Ink
+            )
+        }
     }
 }
