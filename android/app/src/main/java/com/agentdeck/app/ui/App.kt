@@ -126,11 +126,8 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
     }
 
     val currentScreen = state.screen
-    BackHandler(enabled = state.sheet == null && state.handleSystemBackEnabled()) {
-        state.selectDiffFile(null)
-    }
-    BackHandler(enabled = state.sheet == null && state.diffFileId == null && state.canGoBack()) {
-        state.back()
+    BackHandler(enabled = state.handleSystemBackEnabled()) {
+        state.handleSystemBack()
     }
 
     Box(Modifier.fillMaxSize().background(Canvas)) {
