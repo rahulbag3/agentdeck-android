@@ -56,6 +56,16 @@ host computer required.
   unquoted arguments, and JSON / OpenAI-style calls; an unparseable attempt
   gets one repair turn instead of silently ending the run, and a write whose
   block was cut off is refused rather than saved partially.
+- **Phone control** — the agent can drive the device through public Android
+  intents and system services: read battery, network, storage, volume and
+  uptime (`device_status`), list and open apps (`list_apps`, `open_app`), open
+  26 settings panels (`open_settings`), open a URL, share text, prefill the
+  dialer (`dial`) or Messages (`sms_compose`), set an alarm or timer, insert a
+  calendar event, and change stream volume. `dial`, `sms_compose` and
+  `share_text` require approval and stop at the system UI — the agent never
+  places a call or sends a message by itself. No dangerous runtime permissions
+  are requested. The full capability matrix, including what Android does not
+  allow an ordinary app to do, is in [PHONE_CONTROL.md](PHONE_CONTROL.md).
 - **Real toolchains via Termux** — the on-device shell covers toybox
   utilities natively; enable the Termux bridge in Settings and non-toybox
   commands (`node`, `python`, `gradle`…) execute in Termux's sshd over
@@ -209,6 +219,8 @@ android/app/src/main/java/com/agentdeck/app/
 ├── MainActivity.kt         FragmentActivity + Compose host
 ├── data/
 │   ├── AgentDeckState.kt   Central state, navigation, jobs, app lock
+│   ├── AgentTools.kt       Tool protocol, prompts, approvals, executor
+│   ├── PhoneTools.kt       Public-intent phone control + argument parsing
 │   ├── LocalEngine.kt      JNI bridge to llama.cpp
 │   ├── LocalModelRegistry.kt  Imported GGUF catalogue
 │   ├── Models.kt           Tasks, messages, plans, checks, config
@@ -240,7 +252,7 @@ tools/agentdeck-host/
 
 ## Tests
 
-129 JVM unit tests cover:
+138 JVM unit tests cover:
 
 - Room codec round-trips, damaged payloads, and retry-attempt persistence
 - Markdown parsing (blocks, inline styles, link safety, fences)
@@ -261,6 +273,9 @@ tools/agentdeck-host/
   Needle confidence and scoped catalogues) and retry history trimming for local
   models
 - Imported local model catalogue encoding and tolerant decoding
+- Phone argument parsing (number normalisation, 24-hour clocks, durations,
+  calendar starts, volume mapping), the 26 settings panels, the phone approval
+  policy, and phone calls parsed from fenced and JSON shapes
 
 The host agent has 9 protocol tests (auth, approval, denial, inspection mode,
 diff collection, checks, cancellation, diff parsing):

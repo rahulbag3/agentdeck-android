@@ -47,11 +47,24 @@ data class ToolCall(
             "http" -> "http ${args["method"].orEmpty()} ${args["url"].orEmpty()}"
             "memory_save" -> "memory_save \"${(args["text"] ?: "").take(50)}\""
             "memory_recall" -> "memory_recall \"${args["query"].orEmpty()}\""
+            "device_status" -> "device_status"
+            "list_apps" -> "list_apps"
+            "open_app" -> "open_app \"${args["name"].orEmpty()}\""
+            "open_settings" -> "open_settings ${args["panel"].orEmpty()}"
+            "open_url" -> "open_url ${args["url"].orEmpty()}"
+            "share_text" -> "share_text \"${args["text"].orEmpty().take(40)}\""
+            "dial" -> "dial ${args["number"].orEmpty()}"
+            "sms_compose" -> "sms_compose ${args["number"].orEmpty()}"
+            "set_alarm" -> "set_alarm ${args["time"].orEmpty()}"
+            "set_timer" -> "set_timer ${args["duration"].orEmpty()}"
+            "calendar_event" -> "calendar_event \"${args["title"].orEmpty().take(40)}\""
+            "set_volume" -> "set_volume ${args["level"].orEmpty()}%"
             else -> name
         }
 
     val needsApproval: Boolean
         get() = name == "write" || name == "run" || name == "http" ||
+            name == "dial" || name == "sms_compose" || name == "share_text" ||
             (name == "git" && args["action"] == "commit")
 }
 
@@ -63,7 +76,10 @@ object ToolParser {
 
     private val TOOL_NAMES = setOf(
         "list", "read", "write", "run", "grep", "git",
-        "web_search", "web_fetch", "http", "memory_save", "memory_recall"
+        "web_search", "web_fetch", "http", "memory_save", "memory_recall",
+        "device_status", "list_apps", "open_app", "open_settings", "open_url",
+        "share_text", "dial", "sms_compose", "set_alarm", "set_timer",
+        "calendar_event", "set_volume"
     )
 
     /**
@@ -514,6 +530,21 @@ You operate through tool blocks. Each call is a fenced block that starts with
 ```agentdeck-tool memory_save text="The project uses Tailwind v4"
 ```
 
+```agentdeck-tool device_status
+```
+
+```agentdeck-tool open_app name="WhatsApp"
+```
+
+```agentdeck-tool dial number="+919876543210"
+```
+
+```agentdeck-tool set_alarm time="07:30"
+```
+
+```agentdeck-tool open_settings panel="wifi"
+```
+
 Rules:
 - Put the tool name and every argument on the opening line; use double quotes around values.
 - Close every block with a line containing only three backticks. A write block without its closing fence is refused.
@@ -523,6 +554,7 @@ Rules:
 - If the content itself contains three backticks, fence that block with ~~~ instead.
 - Reads, lists, grep, git status/diff/log, web fetch/search, and memory run automatically.
 - write, run, and git commit require the user's approval — they see exactly what you asked.
+- Phone tools control the device. device_status and list_apps only read state. open_app, open_settings, open_url, set_alarm, set_timer, calendar_event and set_volume are safe actions. dial, sms_compose and share_text open the system UI with everything prefilled and require approval; they never place a call or send a message by themselves.
 - The shell is Android's system shell (toybox utilities: ls, cat, grep, sed, awk, find…). If the user has enabled the Termux bridge, non-toybox commands (node, python, gradle…) run in Termux over SSH against the same workspace; otherwise there is no Node, Python, or build toolchain on this device — verify syntax by inspection, and rely on CI or the user for test runs.
 - Study files before editing. Prefer minimal, complete-file writes.
 - Tool results arrive as the next [tool results] message. If a tool errors, adjust and retry.
@@ -554,11 +586,30 @@ containing only three backticks:
 ```agentdeck-tool memory_recall query="preferences"
 ```
 
+```agentdeck-tool device_status
+```
+
+```agentdeck-tool open_app name="WhatsApp"
+```
+
+```agentdeck-tool dial number="+919876543210"
+```
+
+```agentdeck-tool sms_compose number="+919876543210" text="Running late, see you at 7"
+```
+
+```agentdeck-tool set_timer duration="10m"
+```
+
+```agentdeck-tool open_settings panel="wifi"
+```
+
 Rules:
 - Put the tool name and every argument on the opening line; use double quotes around values.
 - Close every block with a line containing only three backticks.
 - One call per block. Never wrap a tool block inside another code fence.
 - web_search, web_fetch, and memory tools run automatically; http calls need the user's approval (they see the exact URL and body).
+- Phone tools control the device. device_status and list_apps only read state. open_app, open_settings, open_url, set_alarm, set_timer, calendar_event and set_volume are safe actions. dial, sms_compose and share_text open the system UI prefilled and require approval; they never place a call or send a message themselves.
 - Use web_search when facts may be time-sensitive; fetch a page for details.
 - Save durable facts about the user or project with memory_save; recall them when relevant.
 - Tool results arrive as the next [tool results] message.
@@ -603,6 +654,7 @@ Be accurate, cite the URLs you used, and never claim you did something you did n
     private val git: WorkspaceGit,
     private val web: WebTools,
     private val memory: MemoryStore,
+    private val phone: PhoneTools,
     private val ssh: SshRunner = SshRunner(),
     /** Returns the active SSH config when the device shell (Termux) is ready. */
     private val sshConfigProvider: () -> SshRunner.Config? = { null }
@@ -633,6 +685,45 @@ Be accurate, cite the URLs you used, and never claim you did something you did n
             "http" -> if (url.isBlank()) "ERROR: http needs url=\"…\"" else null
             "web_fetch" -> if (url.isBlank()) "ERROR: web_fetch needs url=\"…\"" else null
             "web_search" -> if (call.args["query"].orEmpty().isBlank()) "ERROR: web_search needs query=\"…\"" else null
+            "open_app" -> if (call.args["name"].orEmpty().isBlank()) "ERROR: open_app needs name=\"…\"" else null
+            "open_settings" -> {
+                val panel = call.args["panel"].orEmpty()
+                when {
+                    panel.isBlank() -> "ERROR: open_settings needs panel=\"…\""
+                    panel.lowercase() !in PhoneArgs.SETTINGS_PANELS ->
+                        "ERROR: unknown settings panel \"$panel\"; valid: ${PhoneArgs.SETTINGS_PANELS.joinToString()}"
+                    panel.lowercase() in setOf("app_info", "notifications") &&
+                        call.args["package"].orEmpty().isBlank() ->
+                        "ERROR: open_settings panel=\"$panel\" needs package=\"…\""
+                    else -> null
+                }
+            }
+            "open_url" -> if (!url.matches(Regex("^https?://.+", RegexOption.IGNORE_CASE))) {
+                "ERROR: open_url needs a full http(s) URL"
+            } else null
+            "share_text" -> if (call.args["text"].orEmpty().isBlank()) "ERROR: share_text needs text=\"…\"" else null
+            "dial" -> if (PhoneArgs.normalizeNumber(call.args["number"].orEmpty()) == null) {
+                "ERROR: dial needs a valid number, for example +919876543210"
+            } else null
+            "sms_compose" -> if (PhoneArgs.normalizeNumber(call.args["number"].orEmpty()) == null) {
+                "ERROR: sms_compose needs a valid number, for example +919876543210"
+            } else null
+            "set_alarm" -> if (PhoneArgs.parseClock(call.args["time"].orEmpty()) == null) {
+                "ERROR: set_alarm needs time=\"HH:mm\", for example 07:30"
+            } else null
+            "set_timer" -> if (PhoneArgs.parseDurationSeconds(call.args["duration"].orEmpty()) == null) {
+                "ERROR: set_timer needs duration=\"10m\", \"1h30m\", or \"90s\""
+            } else null
+            "calendar_event" -> when {
+                call.args["title"].orEmpty().isBlank() -> "ERROR: calendar_event needs title=\"…\""
+                PhoneArgs.parseStart(call.args["start"].orEmpty()) == null ->
+                    "ERROR: calendar_event needs start=\"yyyy-MM-dd HH:mm\" or \"HH:mm\""
+                else -> null
+            }
+            "set_volume" -> {
+                val level = call.args["level"].orEmpty().toIntOrNull()
+                if (level == null || level !in 0..100) "ERROR: set_volume level must be 0–100" else null
+            }
             else -> null
         }
         if (invalid != null) return ToolOutcome(call, invalid)
@@ -642,6 +733,9 @@ Be accurate, cite the URLs you used, and never claim you did something you did n
                 "write" -> "DENIED: the user declined writing $path"
                 "run" -> "DENIED: the user declined running: $command"
                 "http" -> "DENIED: the user declined the request to $url"
+                "dial" -> "DENIED: the user declined opening the dialer for ${call.args["number"].orEmpty()}"
+                "sms_compose" -> "DENIED: the user declined opening a message to ${call.args["number"].orEmpty()}"
+                "share_text" -> "DENIED: the user declined opening the share sheet"
                 else -> "DENIED: the user declined committing"
             }
             return ToolOutcome(call, denial)
@@ -715,6 +809,39 @@ Be accurate, cite the URLs you used, and never claim you did something you did n
                 ).fold(
                     onSuccess = { it },
                     onFailure = { "ERROR: ${it.message?.take(140)}" }
+                )
+                "device_status" -> phone.status()
+                "list_apps" -> phone.listApps()
+                "open_app" -> phone.openApp(call.args["name"].orEmpty())
+                "open_settings" -> phone.openSettings(
+                    call.args["panel"].orEmpty(),
+                    call.args["package"].orEmpty()
+                )
+                "open_url" -> phone.openUrl(url)
+                "share_text" -> phone.shareText(call.args["text"].orEmpty())
+                "dial" -> phone.dial(call.args["number"].orEmpty())
+                "sms_compose" -> phone.composeSms(
+                    call.args["number"].orEmpty(),
+                    call.args["text"].orEmpty()
+                )
+                "set_alarm" -> phone.setAlarm(
+                    call.args["time"].orEmpty(),
+                    call.args["label"].orEmpty()
+                )
+                "set_timer" -> phone.setTimer(
+                    call.args["duration"].orEmpty(),
+                    call.args["label"].orEmpty()
+                )
+                "calendar_event" -> phone.calendarEvent(
+                    call.args["title"].orEmpty(),
+                    call.args["start"].orEmpty(),
+                    call.args["duration_minutes"].orEmpty(),
+                    call.args["location"].orEmpty(),
+                    call.args["description"].orEmpty()
+                )
+                "set_volume" -> phone.setVolume(
+                    call.args["level"].orEmpty(),
+                    call.args["stream"].orEmpty()
                 )
                 "memory_save" -> {
                     val text = call.args["text"] ?: call.body

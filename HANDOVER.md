@@ -1155,6 +1155,45 @@ EOF
 
 ---
 
+## 2026-10-28 — phone-control tools (Tier 1)
+
+The agent loop can now operate the phone through public Android intents and
+system services. No root, no hidden API, no accessibility service, and no new
+dangerous permissions.
+
+- `data/PhoneTools.kt` holds the runtime plus `PhoneArgs`, a pure parser object
+  for numbers, 24-hour clocks, durations, calendar starts, volume mapping, and
+  settings-panel names.
+- Twelve tools are wired into `ToolParser.TOOL_NAMES`, `ToolCall.label`,
+  `ToolCall.needsApproval`, both system prompts, `ToolExecutor`, and the
+  approval card in `AgentDeckState`: `device_status`, `list_apps`, `open_app`,
+  `open_settings` (26 panels; `app_info` and `notifications` need `package`),
+  `open_url`, `share_text`, `dial`, `sms_compose`, `set_alarm`, `set_timer`,
+  `calendar_event`, `set_volume`.
+- Communication is user-mediated. `dial` opens `ACTION_DIAL` prefilled;
+  `sms_compose` opens `ACTION_SENDTO`/`smsto:` prefilled. Neither places a call
+  nor sends a message, and both require approval together with `share_text`.
+- `AndroidManifest.xml` adds a launcher `<queries>` entry so Android 11+ package
+  visibility allows `list_apps` and `open_app`. Permissions stay `INTERNET` and
+  `ACCESS_NETWORK_STATE`.
+- `PhoneToolsTest` adds 9 tests; the suite is **138 tests, 0 failures**, and
+  `:app:compileDebugKotlin` succeeds.
+- `PHONE_CONTROL.md` documents the implemented set, the full capability map,
+  blocked features (silent call/SMS, Wi-Fi/Bluetooth toggles, UI automation,
+  silent screenshots), and the Tier 2 permission list.
+
+Tier 2 (runtime permissions for direct call, direct SMS, contacts, camera,
+location, notifications) and Tier 3 (accessibility UI automation) are not
+shipped; both need an explicit product decision.
+
+Device-verified on a Xiaomi 11T Pro (Android 16, standard debug build):
+`device_status` returned real battery/network/storage data, `open_settings`
+opened the Wi-Fi panel, `set_volume` moved music to 12/30, and both `dial` and
+`sms_compose` showed the approval card before opening the dialer / Messages.
+Caveats and the exact evidence are in [PHONE_CONTROL.md](PHONE_CONTROL.md).
+
+---
+
 ## 8. Current runtime behavior details
 
 ### Cloud request shape

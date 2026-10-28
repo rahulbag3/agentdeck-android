@@ -161,8 +161,9 @@ class AgentDeckState(
     private val webTools = WebTools()
     val memoryStore = MemoryStore(appContext.filesDir)
     val instructions = InstructionStore(appContext.filesDir)
+    private val phoneTools = PhoneTools(appContext)
     private val toolExecutor = ToolExecutor(
-        workspace, shellRunner, workspaceGit, webTools, memoryStore,
+        workspace, shellRunner, workspaceGit, webTools, memoryStore, phoneTools,
         sshRunner, sshConfigProvider = { sshConfig.takeIf { it.ready } }
     )
     private val agentJobs = mutableMapOf<String, Job>()
@@ -2541,11 +2542,17 @@ class AgentDeckState(
                     title = when (call.name) {
                         "write" -> "Write file"
                         "run" -> "Run command"
+                        "dial" -> "Open dialer"
+                        "sms_compose" -> "Compose message"
+                        "share_text" -> "Share text"
                         else -> "Git commit"
                     },
                     body = when (call.name) {
                         "write" -> "Allow the agent to write ${call.args["path"].orEmpty()} in the workspace?"
                         "run" -> "Allow the agent to run: ${call.args["command"].orEmpty()}"
+                        "dial" -> "Open the dialer for ${call.args["number"].orEmpty()}? The call is not placed until you press call."
+                        "sms_compose" -> "Open Messages for ${call.args["number"].orEmpty()} with this text? The message is not sent until you press send.\n\n${call.args["text"].orEmpty().take(300)}"
+                        "share_text" -> "Open the share sheet with this text?\n\n${call.args["text"].orEmpty().take(300)}"
                         else -> "Allow the agent to commit: ${call.args["message"].orEmpty()}"
                     },
                     command = call.label,
