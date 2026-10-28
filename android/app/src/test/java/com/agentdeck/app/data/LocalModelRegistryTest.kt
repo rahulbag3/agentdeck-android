@@ -72,6 +72,12 @@ class LocalModelRegistryTest {
                 "mmproj-Qwen3VL-4B-Instruct-Q8_0"
             )
         )
+        assertTrue(
+            LocalModelRegistry.projectorMatchesModel(
+                "Qwen3.5-4B-Q4_K_M",
+                "Qwen3.5-4B"
+            )
+        )
     }
 
     @Test

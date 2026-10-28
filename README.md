@@ -185,12 +185,15 @@ then import its `mmproj-*.gguf`; the projector is matched by GGUF metadata and
 model name, and a **VISION** tag appears in Settings. Attach a JPEG or PNG to a
 local chat to use it. Image prefill runs on the CPU and takes minutes on a 4B
 model; PDFs are not rendered. Verified with Qwen3VL-4B-Instruct Q4_K_M plus
-`mmproj-Qwen3VL-4B-Instruct-Q8_0`.
+`mmproj-Qwen3VL-4B-Instruct-Q8_0`, and with Qwen3.5-4B-Q4_K_M plus the
+repo's `mmproj-F16.gguf`.
 
 Import inspects the GGUF itself (architecture and tensor names) and labels each
-model **TEXT** or **VISION**, so a multimodal base model converted to a
-text-only GGUF is not mislabelled. A vision label with no projector means the
-file is a vision family but still needs its `mmproj`.
+model **TEXT** or **VISION**, so a file is not mislabelled from its model card
+alone. Projectors are matched by their own `general.name` metadata as well as
+their filename, so a generic `mmproj-F16.gguf` still attaches to Qwen3.5-4B.
+A vision label with no projector means the model family is vision-capable but
+still needs its `mmproj`.
 
 Two APKs are available:
 

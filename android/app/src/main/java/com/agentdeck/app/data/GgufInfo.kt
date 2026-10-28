@@ -28,6 +28,7 @@ internal object GgufInspector {
 
     private val VISION_FAMILIES = listOf(
         "qwen3vl", "qwen3-vl", "qwen2.5vl", "qwen2.5-vl",
+        "qwen3.5", "qwen3-5", "qwen35",
         "gemma-3", "gemma3", "gemma-4", "gemma4",
         "llava", "minicpm-v", "internvl", "pixtral", "smolvlm",
         "moondream", "paligemma", "idefics", "mllama", "vision"

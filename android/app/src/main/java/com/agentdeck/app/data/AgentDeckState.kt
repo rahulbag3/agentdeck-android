@@ -1092,7 +1092,7 @@ class AgentDeckState(
                 }
                 val info = GgufInspector.inspect(target)
                 if (name.contains("mmproj", ignoreCase = true) || info?.projector == true) {
-                    return@withContext attachVisionProjector(target, name)
+                    return@withContext attachVisionProjector(target, name, info?.name)
                 }
                 val visionCapable = info?.hasEmbeddedVision == true ||
                     GgufInspector.knownVisionFamily(name)
@@ -1150,10 +1150,26 @@ class AgentDeckState(
         }
     }
 
-    private fun attachVisionProjector(target: File, name: String): String {
+    private fun attachVisionProjector(
+        target: File,
+        name: String,
+        metadataName: String? = null
+    ): String {
         val match = importedModels
-            .filter { LocalModelRegistry.projectorMatchesModel(it.name, name) }
-            .maxByOrNull { LocalModelRegistry.visionNameTokens(it.name).size }
+            .mapNotNull { model ->
+                val candidates = listOfNotNull(name, metadataName)
+                val score = candidates.maxOfOrNull { candidate ->
+                    if (LocalModelRegistry.projectorMatchesModel(model.name, candidate)) {
+                        LocalModelRegistry.visionNameTokens(model.name).size
+                    } else {
+                        0
+                    }
+                } ?: 0
+                if (score > 0) model to score else null
+            }
+            .maxByOrNull { it.second }
+            ?.first
+            ?: importedModels.singleOrNull { it.visionCapable && it.mmprojPath == null }
             ?: run {
                 target.delete()
                 return "No matching local model. Import the model first, then its mmproj file."

@@ -22,7 +22,7 @@ class GgufInspectorTest {
         assertEquals(0, info.visionTensors)
         assertFalse(info.hasEmbeddedVision)
         assertFalse(info.projector)
-        assertFalse(GgufInspector.knownVisionFamily("Qwen3.5-4B-Q4_K_M"))
+        assertTrue(GgufInspector.knownVisionFamily("Qwen3.5-4B-Q4_K_M"))
     }
 
     @Test
