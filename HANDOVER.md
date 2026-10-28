@@ -219,10 +219,10 @@ Known gap: local models still do not read the GitHub snapshot (cloud-only).
   `agentdeck-root` is green.
 
 **On-device inference (llama.cpp)**
-- Two native sets, both pinned to llama.cpp `b11963` (updated 2026-10-28 from
+- Two native sets, both pinned to llama.cpp `b11966` (updated 2026-10-28 from
   the official arm64 CPU and Snapdragon release packages; x86_64 emulator libs
   are rebuilt from the same tag):
-  - b11963 smoke test: the **standard** APK loaded the imported
+  - b11966 smoke test: the **standard** APK loaded the imported
     Qwen3VL-4B-Instruct Q4_K_M model and generated a reply on the Xiaomi 11T
     Pro. The **Snapdragon** APK builds, installs, and launches, but its local
     engine is unavailable on this SD888 (HTP below v73); standard remains the

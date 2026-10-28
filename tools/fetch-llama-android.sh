@@ -6,10 +6,10 @@
 #   src/snapdragon/jniLibs/arm64-v8a  CPU + Adreno OpenCL + Hexagon NPU
 #
 # Requires: gh (authenticated), curl-free, Android NDK for llvm-strip.
-# Usage: tools/fetch-llama-android.sh [tag]   (default b11963)
+# Usage: tools/fetch-llama-android.sh [tag]   (default b11966)
 set -euo pipefail
 
-TAG="${1:-${LLAMA_TAG:-b11963}}"
+TAG="${1:-${LLAMA_TAG:-b11966}}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/android/app/src"
 WORK="${LLAMA_PKG_DIR:-$HOME/.cache/agentdeck-llama-pkgs}"

@@ -70,7 +70,7 @@ host computer required.
   utilities natively; enable the Termux bridge in Settings and non-toybox
   commands (`node`, `python`, `gradle`…) execute in Termux's sshd over
   loopback SSH against the same shared workspace, so tests and toolchains
-  genuinely run on the phone. llama.cpp is pinned to upstream `b11963`
+  genuinely run on the phone. llama.cpp is pinned to upstream `b11966`
   (current Hexagon skels for Snapdragon NPU).
 - **Real host execution (optional)** — connect the bundled host agent on your
   computer to run your own agent CLI in the project folder, with approvals,

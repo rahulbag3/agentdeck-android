@@ -19,7 +19,7 @@
 | Carry over from v1 (module, unchanged or lightly adapted) | Becomes in v2 |
 |---|---|
 | `CloudClient` (BYOK SSE, retries) + `CloudProfiles` (multi-API, /models fetch) | `data/ModelRepository` — model picker with saved models per API |
-| `LocalEngine` JNI + llama.cpp **b11963** natives (standard + Snapdragon) | `data/LocalBackend` — on-device streaming chat |
+| `LocalEngine` JNI + llama.cpp **b11966** natives (standard + Snapdragon) | `data/LocalBackend` — on-device streaming chat |
 | `WebTools` (DDG search, page fetch→text, HTTP API calls) | Chat tools: `web_search`, `web_fetch`, `http` |
 | `MemoryStore`, `InstructionStore` | Agent context: memory tools + always-injected snapshot; instruction library |
 | `Workspace` (files, path confinement, GitHub tarball import) | Coding mode file engine |
@@ -92,7 +92,7 @@ kestrel/
   coding tool set, JGit commits. *Milestone: agent edits a file, diff shows,
   user approves.*
 - **P3 — Real execution.** ShellRunner (toybox) + Termux bridge + local
-  models (llama b11963 natives) as chat/coding backend.
+  models (llama b11966 natives) as chat/coding backend.
   *Milestone: `node -v` runs through an approved tool call; local model chats.*
 - **P4 — Polish + release.** Empty/error states, dynamic color, widget?,
   95-test-equivalent coverage for ports, R8 release, signed APKs, README.
