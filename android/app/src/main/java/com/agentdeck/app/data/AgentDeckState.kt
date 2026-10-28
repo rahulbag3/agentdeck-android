@@ -2869,18 +2869,20 @@ class AgentDeckState(
             systemPrompt
         }
         val turnsForModel = if (earlierImage) {
-            // Do not feed earlier image manifests or image descriptions back
-            // into a text-only turn; small local models copy them verbatim and
-            // claim to see an image that is no longer attached.
-            val imageAttachment = Regex(
-                "(?i)attachments/[^\\s]+\\.(jpg|jpeg|png|webp|gif|bmp|heic|heif|avif)"
-            )
-            val imageTalk = Regex(
-                "(?i)\\b(image|images|picture|photo|photograph|screenshot)\\b"
-            )
-            turns.filterNot { turn ->
-                (turn.role == "assistant" && imageTalk.containsMatchIn(turn.content)) ||
-                    (turn.role == "user" && imageAttachment.containsMatchIn(turn.content))
+            // Keep the whole text conversation, including earlier assistant
+            // descriptions; put the no-image instruction on the current turn
+            // so the model does not mistake history for current vision.
+            val lastUser = turns.indexOfLast { it.role == "user" }
+            if (lastUser < 0) {
+                turns
+            } else {
+                turns.toMutableList().also { list ->
+                    list[lastUser] = list[lastUser].copy(
+                        content = list[lastUser].content + "\n\n[Note: earlier images are not attached to this message. " +
+                            "Use the conversation above as text history, but do not claim to see or describe an image. " +
+                            "If the user asks about an image, say it is not attached and ask them to reattach it.]"
+                    )
+                }
             }
         } else {
             turns
