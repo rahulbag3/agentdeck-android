@@ -117,8 +117,19 @@ Settings panels: `wifi`, `bluetooth`, `data`, `airplane`, `battery`, `display`,
 
 ## Permissions
 
-Current manifest: `INTERNET`, `ACCESS_NETWORK_STATE`, plus a launcher `<queries>`
-entry for package visibility. Tier 1 adds **no dangerous permissions**.
+Current manifest: `INTERNET`, `ACCESS_NETWORK_STATE`, and
+`com.android.alarm.permission.SET_ALARM`, plus `<queries>` entries for launcher
+apps, `SET_ALARM`, `SET_TIMER`, calendar `INSERT`, and `SEND text/plain`.
+Tier 1 adds **no dangerous runtime permissions**.
+
+`com.android.alarm.permission.SET_ALARM` is a **normal** permission
+(`prot=normal` in `dumpsys package android`): it is granted at install time and
+never prompts. It is required because both the Xiaomi and Google Clock handlers
+for `SET_ALARM` / `SET_TIMER` are protected by it; without it the system
+resolver is empty and the launch fails with `Permission Denial`.
+
+The `<queries>` entries matter on Android 11+: an app only sees (and can hand
+off to) handlers it declares. They are visibility declarations, not grants.
 
 Tier 2 would add, one at a time with a settings explanation and runtime prompt:
 
@@ -160,6 +171,19 @@ cd android
 `PhoneToolsTest` covers number normalisation, clock parsing, duration parsing,
 calendar start parsing, volume mapping, settings panels, approval policy, and
 fenced/JSON protocol parsing. The full suite is **138 tests, 0 failures**.
+
+`PhoneToolsDeviceTest` (in `androidTest`) exercises the real intents:
+`list_apps`, `open_url`, `share_text`, `set_alarm`, `set_timer`,
+`calendar_event`, plus a handler-visibility probe. Run one method at a time so
+the foreground activity is unambiguous:
+
+```powershell
+cd android
+.\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+adb install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+adb shell am instrument -w -e class com.agentdeck.app.data.PhoneToolsDeviceTest#setAlarmOpensClock com.agentdeck.app.test/androidx.test.runner.AndroidJUnitRunner
+```
 
 ## Device verification recipe
 
@@ -204,10 +228,37 @@ signing key, so app data survived.
 | Tool | Result |
 | --- | --- |
 | `device_status` | Returned real values: battery 100% and charging, Wi-Fi with internet, 180.1 GB free of 224.2 GB, `Xiaomi 2107113SG`, Android 16 (API 36). |
+| `list_apps` | On-device test asserts a non-empty `N launchable apps:` list. |
+| `open_app` | `name="WhatsApp"` resolved `com.whatsapp/com.whatsapp.home.ui.HomeActivity`. |
 | `open_settings` | `panel="wifi"` opened `com.android.settings/.Settings$WifiSettingsActivity`. |
+| `open_url` | `https://example.com` opened `org.mozilla.firefox/...HomeActivity`, which rendered "Example Domain". Asserted by an on-device test. |
+| `share_text` | System chooser populated with WhatsApp, Firefox, Quick Share and others. |
+| `dial` | Approval card showed `+919876543210` and "The call is not placed until you press call." **Allow once** opened Google Dialer prefilled; nothing was dialled. |
+| `sms_compose` | Approval card showed the number and body. **Allow once** handed `smsto:` to `com.google.android.apps.messaging/...LaunchConversationActivity`. No composer appeared — see the caveat below. |
 | `set_volume` | `level="40", stream="music"` returned `set volume to 40% (12/30)`; `dumpsys audio` confirmed `streamVolume:12`. |
-| `dial` | Approval card showed `+919876543210` and "The call is not placed until you press call." **Allow once** opened `com.google.android.dialer` with the number prefilled; nothing was dialled. |
-| `sms_compose` | Approval card showed the number and `running late`. **Allow once** started `com.google.android.apps.messaging/...LaunchConversationActivity`; Google Messages did not render its composer on this Xiaomi build, so the prefilled body could not be confirmed visually. |
+| `set_alarm` | Opened Xiaomi Clock's edit screen with **7:30 AM**, label `Standup`, tomorrow, default ringtone; nothing saved until the user taps `Delete`/save. |
+| `set_timer` | Opened Xiaomi Clock's timer at **10:00** with label `Tea` and started it (9:53 left when checked). MIUI runs the timer immediately instead of showing a confirm step; it was deleted after the test. |
+| `calendar_event` | Opened Etar `EditEventActivity` prefilled: `Dentist`, Fri Oct 30 2026, 14:30–15:15, India Standard Time, on `rahulbag3@gmail.com`. Not saved until `DONE`. |
+
+### Two ROM quirks worth knowing
+
+**Empty resolver for clock/calendar.** MIUI's system resolver returns an empty
+list for `SET_ALARM` / `SET_TIMER` / calendar `INSERT` when a non-system app
+starts them, even though `queryIntentActivities` in the same app returns both
+Clock handlers and even when the app builds its own `chooser`. AgentDeck
+therefore resolves the handler itself and launches an explicit component
+(`launchAmbiguous()`), falling back to the plain implicit intent when nothing
+resolves. If the user sets a default Clock app for the intent, that default is
+honoured.
+
+**SMS composer does not render.** Google Messages holds the SMS role on this
+phone, but the app has never finished its first-run onboarding: launching
+`ConversationListActivity` shows "Welcome! / Continue as Rahul". Until that
+setup is completed, `LaunchConversationActivity` opens as a transparent,
+empty window for any `smsto:` URI — with or without `sms_body`, and also when
+started from `adb`. AOSP `com.android.messaging` is also installed but stops at
+its permission onboarding. So `sms_compose` is correct at the intent layer and
+blocked by app setup, not by AgentDeck.
 
 Model note: the run used local `Qwen3.5-4B-Q4_K_M` on CPU. It routed
 `device_status`, `open_settings`, `set_volume`, `dial`, and `sms_compose`. Its
@@ -217,9 +268,13 @@ saved an unrelated memory ("running late"), which was cleared manually.
 OpenRouter's free cloud models returned HTTP 429 throughout the test, so the
 cloud path was not exercised.
 
-Not individually exercised on hardware: `list_apps`, `open_app`, `open_url`,
-`share_text`, `set_alarm`, `set_timer`, `calendar_event`. They share the same
-`launch()` path and are covered by the argument and approval tests.
+Routing caveat: with the same model, "Open https://example.com in the browser"
+was repeatedly answered with `web_fetch` (or with an invented success message
+and no tool call at all), even after both system prompts spelled out that
+`open_url` launches the browser while `web_fetch` only reads text. The parser
+and executor are fine — the 4B model is the weak link. Use a larger cloud
+model for reliable routing, or name the tool explicitly.
+
 
 ## Next decisions
 

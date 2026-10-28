@@ -1,9 +1,11 @@
 package com.agentdeck.app.data
 
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -252,7 +254,7 @@ class PhoneTools(private val context: Context) {
             putExtra(AlarmClock.EXTRA_SKIP_UI, false)
             if (label.isNotBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, label)
         }
-        return launch(intent, "opened Clock with alarm ${PhoneArgs.formatClock(hour, minute)} — confirm to save")
+        return launchAmbiguous(intent, "opened Clock with alarm ${PhoneArgs.formatClock(hour, minute)} — confirm to save")
     }
 
     fun setTimer(duration: String, label: String = ""): String {
@@ -263,7 +265,7 @@ class PhoneTools(private val context: Context) {
             putExtra(AlarmClock.EXTRA_SKIP_UI, false)
             if (label.isNotBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, label)
         }
-        return launch(intent, "opened Clock with a ${PhoneArgs.formatDuration(seconds)} timer — confirm to start")
+        return launchAmbiguous(intent, "opened Clock with a ${PhoneArgs.formatDuration(seconds)} timer — confirm to start")
     }
 
     fun calendarEvent(
@@ -289,7 +291,7 @@ class PhoneTools(private val context: Context) {
             if (location.isNotBlank()) putExtra(CalendarContract.Events.EVENT_LOCATION, location)
             if (description.isNotBlank()) putExtra(CalendarContract.Events.DESCRIPTION, description)
         }
-        return launch(intent, "opened Calendar with \"$title\" at ${PhoneArgs.formatStart(begin)} — save to add")
+        return launchAmbiguous(intent, "opened Calendar with \"$title\" at ${PhoneArgs.formatStart(begin)} — save to add")
     }
 
     // ---------------------------------------------------------------- volume
@@ -340,6 +342,25 @@ class PhoneTools(private val context: Context) {
         "ERROR: Android blocked that action: ${e.message?.take(120)}"
     } catch (e: Exception) {
         "ERROR: ${e.javaClass.simpleName}: ${e.message?.take(120)}"
+    }
+
+    /**
+     * Some launchers (MIUI) show an empty resolver/chooser when a non-system app
+     * asks to handle an implicit intent, even though the app can see the
+     * handlers. Resolve the handler here and launch it explicitly; the user
+     * still confirms the action inside the clock or calendar app.
+     */
+    private fun launchAmbiguous(intent: Intent, success: String): String {
+        val handlers = packageManager.queryIntentActivities(intent, 0)
+        if (handlers.isEmpty()) return launch(intent, success)
+        val preferred = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        val chosen = preferred?.activityInfo
+            ?.takeIf { it.packageName != "android" }
+            ?: handlers.first().activityInfo
+        val direct = Intent(intent).setComponent(
+            ComponentName(chosen.packageName, chosen.name)
+        )
+        return launch(direct, success)
     }
 
     private companion object {

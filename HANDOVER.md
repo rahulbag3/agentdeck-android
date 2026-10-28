@@ -1173,11 +1173,15 @@ dangerous permissions.
 - Communication is user-mediated. `dial` opens `ACTION_DIAL` prefilled;
   `sms_compose` opens `ACTION_SENDTO`/`smsto:` prefilled. Neither places a call
   nor sends a message, and both require approval together with `share_text`.
-- `AndroidManifest.xml` adds a launcher `<queries>` entry so Android 11+ package
-  visibility allows `list_apps` and `open_app`. Permissions stay `INTERNET` and
-  `ACCESS_NETWORK_STATE`.
+- `AndroidManifest.xml` declares `com.android.alarm.permission.SET_ALARM` (a
+  normal permission, granted at install with no prompt; both Clock handlers are
+  guarded by it) and `<queries>` entries for launcher apps, `SET_ALARM`,
+  `SET_TIMER`, calendar `INSERT`, and `SEND text/plain` so Android 11+ visibility
+  lets the tools resolve their handlers. No dangerous runtime permission is
+  added.
 - `PhoneToolsTest` adds 9 tests; the suite is **138 tests, 0 failures**, and
-  `:app:compileDebugKotlin` succeeds.
+  `:app:compileDebugKotlin` succeeds. `PhoneToolsDeviceTest` adds eight
+  on-device tests that drive the real intents.
 - `PHONE_CONTROL.md` documents the implemented set, the full capability map,
   blocked features (silent call/SMS, Wi-Fi/Bluetooth toggles, UI automation,
   silent screenshots), and the Tier 2 permission list.
@@ -1186,11 +1190,23 @@ Tier 2 (runtime permissions for direct call, direct SMS, contacts, camera,
 location, notifications) and Tier 3 (accessibility UI automation) are not
 shipped; both need an explicit product decision.
 
-Device-verified on a Xiaomi 11T Pro (Android 16, standard debug build):
-`device_status` returned real battery/network/storage data, `open_settings`
-opened the Wi-Fi panel, `set_volume` moved music to 12/30, and both `dial` and
-`sms_compose` showed the approval card before opening the dialer / Messages.
-Caveats and the exact evidence are in [PHONE_CONTROL.md](PHONE_CONTROL.md).
+Device-verified on a Xiaomi 11T Pro (Android 16, standard debug build), all
+twelve tools: `device_status` returned real battery/network/storage data,
+`list_apps` returned the installed set, `open_app` opened WhatsApp,
+`open_settings` opened the Wi-Fi panel, `open_url` opened Firefox on
+example.com, `share_text` populated the system chooser, `set_volume` moved music
+to 12/30, `dial` opened Google Dialer prefilled, `set_alarm` opened Xiaomi Clock
+at 7:30 AM, `set_timer` started a 10-minute timer, and `calendar_event` prefilled
+"Dentist" in Etar. `sms_compose` hands `smsto:` to Google Messages correctly, but
+that app has never finished its first-run onboarding on this phone, so no
+composer renders — an app-setup issue, not a tool bug.
+
+Two ROM notes are recorded in [PHONE_CONTROL.md](PHONE_CONTROL.md): MIUI's
+resolver returns an empty list for clock/calendar intents started by ordinary
+apps (AgentDeck now resolves and launches an explicit component), and the
+Google Messages onboarding gap above. The local 4B model also misroutes "open a
+URL" to `web_fetch` despite explicit prompt rules; a larger model routes
+correctly.
 
 ---
 

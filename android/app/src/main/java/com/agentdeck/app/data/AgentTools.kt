@@ -530,20 +530,19 @@ You operate through tool blocks. Each call is a fenced block that starts with
 ```agentdeck-tool memory_save text="The project uses Tailwind v4"
 ```
 
-```agentdeck-tool device_status
-```
-
-```agentdeck-tool open_app name="WhatsApp"
-```
-
-```agentdeck-tool dial number="+919876543210"
-```
-
-```agentdeck-tool set_alarm time="07:30"
-```
-
-```agentdeck-tool open_settings panel="wifi"
-```
+Phone tool signatures (exact argument names, double-quoted values):
+- device_status
+- list_apps
+- open_app name="WhatsApp"
+- open_settings panel="wifi"  (app_info and notifications also need package="com.whatsapp")
+- open_url url="https://example.com"
+- share_text text="…"
+- dial number="+919876543210"
+- sms_compose number="+919876543210" text="…"
+- set_alarm time="07:30" label="Standup"
+- set_timer duration="10m" label="Tea"
+- calendar_event title="Dentist" start="2026-10-30 14:30" duration_minutes="45"
+- set_volume level="40" stream="music"
 
 Rules:
 - Put the tool name and every argument on the opening line; use double quotes around values.
@@ -555,6 +554,8 @@ Rules:
 - Reads, lists, grep, git status/diff/log, web fetch/search, and memory run automatically.
 - write, run, and git commit require the user's approval — they see exactly what you asked.
 - Phone tools control the device. device_status and list_apps only read state. open_app, open_settings, open_url, set_alarm, set_timer, calendar_event and set_volume are safe actions. dial, sms_compose and share_text open the system UI with everything prefilled and require approval; they never place a call or send a message by themselves.
+- Use the exact phone signatures above; a missing or wrong argument is rejected before anything runs.
+- open_url launches the phone's browser and shows the page to the user. web_fetch only downloads page text into the chat. When the user says open, launch or show a site, use open_url, never web_fetch.
 - The shell is Android's system shell (toybox utilities: ls, cat, grep, sed, awk, find…). If the user has enabled the Termux bridge, non-toybox commands (node, python, gradle…) run in Termux over SSH against the same workspace; otherwise there is no Node, Python, or build toolchain on this device — verify syntax by inspection, and rely on CI or the user for test runs.
 - Study files before editing. Prefer minimal, complete-file writes.
 - Tool results arrive as the next [tool results] message. If a tool errors, adjust and retry.
@@ -586,23 +587,19 @@ containing only three backticks:
 ```agentdeck-tool memory_recall query="preferences"
 ```
 
-```agentdeck-tool device_status
-```
-
-```agentdeck-tool open_app name="WhatsApp"
-```
-
-```agentdeck-tool dial number="+919876543210"
-```
-
-```agentdeck-tool sms_compose number="+919876543210" text="Running late, see you at 7"
-```
-
-```agentdeck-tool set_timer duration="10m"
-```
-
-```agentdeck-tool open_settings panel="wifi"
-```
+Phone tool signatures (exact argument names, double-quoted values):
+- device_status
+- list_apps
+- open_app name="WhatsApp"
+- open_settings panel="wifi"  (app_info and notifications also need package="com.whatsapp")
+- open_url url="https://example.com"
+- share_text text="…"
+- dial number="+919876543210"
+- sms_compose number="+919876543210" text="…"
+- set_alarm time="07:30" label="Standup"
+- set_timer duration="10m" label="Tea"
+- calendar_event title="Dentist" start="2026-10-30 14:30" duration_minutes="45"
+- set_volume level="40" stream="music"
 
 Rules:
 - Put the tool name and every argument on the opening line; use double quotes around values.
@@ -610,6 +607,8 @@ Rules:
 - One call per block. Never wrap a tool block inside another code fence.
 - web_search, web_fetch, and memory tools run automatically; http calls need the user's approval (they see the exact URL and body).
 - Phone tools control the device. device_status and list_apps only read state. open_app, open_settings, open_url, set_alarm, set_timer, calendar_event and set_volume are safe actions. dial, sms_compose and share_text open the system UI prefilled and require approval; they never place a call or send a message themselves.
+- Use the exact phone signatures above; a missing or wrong argument is rejected before anything runs.
+- open_url launches the phone's browser and shows the page to the user. web_fetch only downloads page text into the chat. When the user says open, launch or show a site, use open_url, never web_fetch.
 - Use web_search when facts may be time-sensitive; fetch a page for details.
 - Save durable facts about the user or project with memory_save; recall them when relevant.
 - Tool results arrive as the next [tool results] message.
