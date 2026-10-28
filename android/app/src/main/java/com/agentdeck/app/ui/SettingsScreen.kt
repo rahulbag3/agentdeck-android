@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -49,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -927,6 +929,7 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
     val visionReady = imported?.mmprojPath != null
     val visionCapable = imported?.visionCapable == true
     val visionChecked = imported?.visionChecked == true
+    var confirmRemove by remember(model.id) { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -953,8 +956,14 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.width(6.dp))
-                AdTag(localState.label, tone.bg, tone.fg)
+                val showStateTag = localState != LocalModelState.LOADING &&
+                    localState != LocalModelState.IMPORTING
+                if (showStateTag) {
+                    Spacer(Modifier.width(6.dp))
+                    AdTag(localState.label, tone.bg, tone.fg)
+                } else {
+                    Spacer(Modifier.width(6.dp))
+                }
                 if (visionReady) {
                     Spacer(Modifier.width(5.dp))
                     AdTag("VISION", VioletSoft, VioletInk)
@@ -1001,15 +1010,11 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
                     onClick = { state.loadLocalModel(model.id) },
                     small = true
                 )
-                LocalModelState.LOADING, LocalModelState.IMPORTING -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = BlueInk
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(localState.label, fontSize = 10.5.sp, color = BlueInk)
-                }
+                LocalModelState.LOADING, LocalModelState.IMPORTING -> CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = BlueInk
+                )
             }
             Spacer(Modifier.height(4.dp))
             Text(
@@ -1018,10 +1023,42 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
                 color = RedInk,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .clickable { state.removeLocalModel(model.id) }
+                    .clickable { confirmRemove = true }
                     .padding(horizontal = 4.dp, vertical = 2.dp)
             )
         }
+    }
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            containerColor = AdSurface,
+            title = {
+                Text("Remove model?", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Ink)
+            },
+            text = {
+                Text(
+                    "Delete ${model.name} and its vision projector from this phone. You can import it again later.",
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    color = Muted2
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRemove = false
+                        state.removeLocalModel(model.id)
+                    }
+                ) {
+                    Text("Remove", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RedInk)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemove = false }) {
+                    Text("Cancel", fontSize = 11.sp, color = Ink)
+                }
+            }
+        )
     }
 }
 
