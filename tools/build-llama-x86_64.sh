@@ -8,7 +8,7 @@
 # Usage: tools/build-llama-x86_64.sh
 set -euo pipefail
 
-LLAMA_TAG="${LLAMA_TAG:-b11851}"
+LLAMA_TAG="${LLAMA_TAG:-b11963}"
 NDK_VERSION="${NDK_VERSION:-29.0.14206865}"
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/AppData/Local/Android/Sdk}}"
 BUILD_ROOT="${LLAMA_BUILD_DIR:-$HOME/.cache/agentdeck-llama}"

@@ -109,11 +109,21 @@ The user explicitly kept in scope:
   - Paragraphs, headings, bullet/numbered lists, quotes, rules, and fenced code.
   - Inline code, bold, italic, and safe `http(s)` links.
   - Unknown syntax falls back to plain text; no raw HTML or images.
+- Reply export from chat:
+  - Every agent code fence has Copy code and Save code; the saved extension and MIME follow the fence language, with HTML/JSON/SVG/XML sniffed when the fence is unlabeled.
+  - Long code fences (>12 lines) collapse to a compact 178 dp preview with a fade and a `Show all N lines` bar; a tap on the preview or the header chevron expands it, and a tap on the expanded code collapses it. Short fences render in full.
+  - The reply action row has a Save action offering PDF, HTML, Markdown, and plain text through the system document picker.
+  - PDF and HTML are built off the main thread; a ~100 KB HTML reply produced a 13-page PDF without blocking the UI.
+- Chat attachments:
+  - Picked files are copied into the project workspace under `attachments/` and shown as draft chips; choosing a file no longer triggers an immediate send.
+  - Chat prompts can open text attachments with `read`; the parser accepts provider aliases (`read_file`, `file_path`, JSON-in-XML hybrids) and maps sandbox paths such as `/home/user/workspace/attachments/…` back to the workspace.
+  - Images are encoded to data URLs (max 1408 px, up to 3) and sent to cloud models as OpenAI-style image content; a text-only model rejects them, the app retries without images and shows a notice.
+  - Verified with `dots-studio/dots-3-note-preview:free`: it quoted the caption inside the attached magazine image and described the portrait. PDFs are not rendered as images, and the local llama.cpp runtime has no mtmd/mmproj vision path yet.
 - Host disconnect handling:
   - Disconnecting while a host run is active stops the run and marks the task `Failed` with a retryable `Host disconnected` failure.
   - Reconnecting leaves tasks stopped until the user retries; a retry clears the old failure.
 - Cloud and GitHub configuration survives app restart.
-- Unit tests for persistence, Markdown parsing, cloud URL validation, provider-turn building, error classification, and backup format (45 tests).
+- Unit tests for persistence, Markdown parsing, cloud URL validation, provider-turn building, attachment manifests/aliases/image detection, error classification, reply export naming/HTML escaping, and backup format (161 tests).
 - Debug APK builds successfully.
 
 ### Still simulated
@@ -209,7 +219,14 @@ Known gap: local models still do not read the GitHub snapshot (cloud-only).
   `agentdeck-root` is green.
 
 **On-device inference (llama.cpp)**
-- Two native sets, both pinned to llama.cpp `b11851`:
+- Two native sets, both pinned to llama.cpp `b11963` (updated 2026-10-28 from
+  the official arm64 CPU and Snapdragon release packages; x86_64 emulator libs
+  are rebuilt from the same tag):
+  - b11963 smoke test: the **standard** APK loaded the imported
+    Qwen3VL-4B-Instruct Q4_K_M model and generated a reply on the Xiaomi 11T
+    Pro. The **Snapdragon** APK builds, installs, and launches, but its local
+    engine is unavailable on this SD888 (HTP below v73); standard remains the
+    daily build for this phone.
   - **Standard** (`src/standard/jniLibs/arm64-v8a`): official Android CPU package
     with runtime-dispatch variants (`armv8.0`, `armv8.2+dotprod`, `armv8.6+i8mm`,
     `armv9.0`, `armv9.2`). `libllama` is DL-based; the JNI calls
@@ -415,8 +432,9 @@ Known gap: local models still do not read the GitHub snapshot (cloud-only).
   parse, prompt builder per mode).
 - Honest limits: web_search scrapes DDG (may break — it reports instead of
   faking); http calls send data off-device and are always approved first;
-  memory is plaintext JSON (user-inspectable); no file attachments in chat
-  yet (next step); local models are not streamed in the loop (blocking per
+  memory is plaintext JSON (user-inspectable); attachments are copied into the
+  workspace, text files are opened with the read tool, and images go to cloud
+  vision models (local vision and PDF page rendering are not implemented); local models are not streamed in the loop (blocking per
   step).
 
 **On-device agent harness (2026-10-25)** — the core host-independent execution path:

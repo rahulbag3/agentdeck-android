@@ -6,10 +6,10 @@
 #   src/snapdragon/jniLibs/arm64-v8a  CPU + Adreno OpenCL + Hexagon NPU
 #
 # Requires: gh (authenticated), curl-free, Android NDK for llvm-strip.
-# Usage: tools/fetch-llama-android.sh [tag]   (default b11876)
+# Usage: tools/fetch-llama-android.sh [tag]   (default b11963)
 set -euo pipefail
 
-TAG="${1:-${LLAMA_TAG:-b11876}}"
+TAG="${1:-${LLAMA_TAG:-b11963}}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/android/app/src"
 WORK="${LLAMA_PKG_DIR:-$HOME/.cache/agentdeck-llama-pkgs}"
@@ -46,6 +46,10 @@ tar -xzf "llama-${TAG}-bin-android-arm64-snapdragon.tar.gz" -C snapdragon
 CPU_DIR="$(find cpu -maxdepth 2 -name libllama.so -printf '%h' | head -1)"
 SD_DIR="$(find snapdragon -maxdepth 3 -name libllama.so -printf '%h' | head -1)"
 CPU_INC="$(dirname "$CPU_DIR")/include"
+HEADER_INC="$(dirname "$SD_DIR")/include"
+if [ ! -f "$HEADER_INC/llama.h" ] && [ -f "$CPU_INC/llama.h" ]; then
+  HEADER_INC="$CPU_INC"
+fi
 
 install_lib() {
   local src="$1" dest="$2" name
@@ -56,6 +60,7 @@ install_lib() {
 
 # Standard: runtime-dispatch CPU variants. RPC is intentionally excluded: ggml
 # loads every backend in the directory and the RPC backend hangs in-app.
+rm -f "$APP/standard/jniLibs/arm64-v8a/"*.so
 for lib in libllama.so libggml.so libggml-base.so; do
   install_lib "$CPU_DIR/$lib" "$APP/standard/jniLibs/arm64-v8a"
 done
@@ -65,6 +70,7 @@ done
 rm -f "$APP/standard/jniLibs/arm64-v8a/libggml-rpc.so"
 
 # Snapdragon: statically linked CPU + OpenCL + Hexagon backends.
+rm -f "$APP/snapdragon/jniLibs/arm64-v8a/"*.so
 for lib in libllama.so libggml.so libggml-base.so libggml-cpu.so libggml-rpc.so \
            libggml-opencl.so libggml-hexagon.so; do
   install_lib "$SD_DIR/$lib" "$APP/snapdragon/jniLibs/arm64-v8a"
@@ -74,9 +80,11 @@ for lib in "$SD_DIR"/libggml-htp-v*.so; do
 done
 
 mkdir -p "$APP/main/cpp/llama/include"
-if [ -f "$CPU_INC/llama.h" ]; then
-  cp "$CPU_INC/llama.h" "$APP/main/cpp/llama/include/"
-  cp "$CPU_INC"/ggml*.h "$APP/main/cpp/llama/include/" 2>/dev/null || true
+if [ -f "$HEADER_INC/llama.h" ]; then
+  cp "$HEADER_INC/llama.h" "$APP/main/cpp/llama/include/"
+  cp "$HEADER_INC"/ggml*.h "$APP/main/cpp/llama/include/" 2>/dev/null || true
+  cp "$HEADER_INC/gguf.h" "$APP/main/cpp/llama/include/" 2>/dev/null || true
+  cp "$HEADER_INC/llama-cpp.h" "$APP/main/cpp/llama/include/" 2>/dev/null || true
 fi
 
 echo "Installed standard and Snapdragon arm64 libraries for $TAG."
