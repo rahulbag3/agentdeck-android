@@ -2855,12 +2855,42 @@ class AgentDeckState(
                 activity = it.activity + ActivityEvent("local-engine", "Thinking on this phone · ${imported.name}", stamp)
             )
         }
-        val roles = turns.map { it.role }.toTypedArray()
-        val contents = turns.map { it.content }.toTypedArray()
+        val earlierImage = images.isEmpty() && initial.messages.any { message ->
+            message.role == MessageRole.USER &&
+                message.attachments.any { ImageInput.isImage(it.name) }
+        }
+        val effectiveSystemPrompt = if (earlierImage) {
+            systemPrompt + "\n\n[Image context]\n" +
+                "No image is attached to the latest user message. You cannot see earlier images now. " +
+                "Do not say or imply that you can see an image. Do not bring up the earlier image unless " +
+                "the user explicitly asks; if they ask, say it is not attached and ask them to attach it again. " +
+                "Refer to your earlier description only when relevant."
+        } else {
+            systemPrompt
+        }
+        val turnsForModel = if (earlierImage) {
+            // Do not feed earlier image manifests or image descriptions back
+            // into a text-only turn; small local models copy them verbatim and
+            // claim to see an image that is no longer attached.
+            val imageAttachment = Regex(
+                "(?i)attachments/[^\\s]+\\.(jpg|jpeg|png|webp|gif|bmp|heic|heif|avif)"
+            )
+            val imageTalk = Regex(
+                "(?i)\\b(image|images|picture|photo|photograph|screenshot)\\b"
+            )
+            turns.filterNot { turn ->
+                (turn.role == "assistant" && imageTalk.containsMatchIn(turn.content)) ||
+                    (turn.role == "user" && imageAttachment.containsMatchIn(turn.content))
+            }
+        } else {
+            turns
+        }
+        val roles = turnsForModel.map { it.role }.toTypedArray()
+        val contents = turnsForModel.map { it.content }.toTypedArray()
         val result = withContext(Dispatchers.Default) {
             val buffer = StringBuilder()
             val code = LocalEngine.nativeGenerate(
-                handle, systemPrompt, roles, contents, images.toTypedArray(),
+                handle, effectiveSystemPrompt, roles, contents, images.toTypedArray(),
                 LOCAL_MAX_TOKENS, 0.7f, 0.9f,
                 object : LocalEngine.TokenCallback {
                     override fun onToken(text: String): Boolean {
