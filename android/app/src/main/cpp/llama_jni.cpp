@@ -13,6 +13,8 @@
 
 #include "llama.h"
 #include "ggml-backend.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
 
 #define LOG_TAG "AgentDeckLlama"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -24,6 +26,7 @@ struct Session {
     llama_model * model = nullptr;
     llama_context * ctx = nullptr;
     const llama_vocab * vocab = nullptr;
+    mtmd_context * mctx = nullptr;
     std::atomic<bool> cancelled{false};
     std::mutex mutex;
 };
@@ -207,7 +210,7 @@ std::string buildPrompt(
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_agentdeck_app_data_LocalEngine_nativeLoad(
-    JNIEnv * env, jobject, jstring path, jint threads, jint contextSize, jstring accelerator) {
+    JNIEnv * env, jobject, jstring path, jstring mmprojPath, jint threads, jint contextSize, jstring accelerator) {
     ensureBackend();
     const std::string modelPath = toUtf8(env, path);
     if (modelPath.empty()) return 0;
@@ -258,6 +261,21 @@ Java_com_agentdeck_app_data_LocalEngine_nativeLoad(
         return 0;
     }
     session->vocab = llama_model_get_vocab(session->model);
+    const std::string projectorPath = toUtf8(env, mmprojPath);
+    if (!projectorPath.empty()) {
+        mtmd_context_params mp = mtmd_context_params_default();
+        mp.n_threads = threads > 0 ? threads : 4;
+        mp.use_gpu = false;
+        mp.print_timings = false;
+        mp.image_min_tokens = 256;
+        mp.image_max_tokens = 1024;
+        session->mctx = mtmd_init_from_file(projectorPath.c_str(), session->model, mp);
+        if (session->mctx == nullptr) {
+            LOGE("Failed to init vision projector: %s", projectorPath.c_str());
+        } else {
+            LOGI("Vision projector loaded: %s support_vision=%d", projectorPath.c_str(), mtmd_support_vision(session->mctx));
+        }
+    }
     setLastBackend(device != nullptr ? ggml_backend_dev_name(device) : "CPU");
     return reinterpret_cast<jlong>(session);
 }
@@ -291,6 +309,7 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
     jstring system,
     jobjectArray roles,
     jobjectArray contents,
+    jobjectArray imagePaths,
     jint maxTokens,
     jfloat temperature,
     jfloat topP,
@@ -321,39 +340,114 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
         }
     }
 
+    std::vector<std::string> images;
+    const jsize imageCount = imagePaths != nullptr ? env->GetArrayLength(imagePaths) : 0;
+    for (jsize i = 0; i < imageCount; i++) {
+        auto image = static_cast<jstring>(env->GetObjectArrayElement(imagePaths, i));
+        std::string imagePath = toUtf8(env, image);
+        env->DeleteLocalRef(image);
+        if (!imagePath.empty()) images.push_back(imagePath);
+    }
+    if (!images.empty() && session->mctx == nullptr) return -4;
+
+    if (!images.empty()) {
+        const char * markerPtr = mtmd_get_marker(session->mctx);
+        const std::string marker = markerPtr != nullptr ? markerPtr : mtmd_default_marker();
+        for (auto it = history.rbegin(); it != history.rend(); ++it) {
+            if (it->first == "user") {
+                std::string prefix;
+                for (size_t i = 0; i < images.size(); ++i) {
+                    prefix += marker;
+                    prefix += "\n";
+                }
+                it->second = prefix + it->second;
+                break;
+            }
+        }
+    }
+
     const std::string prompt = buildPrompt(session, toUtf8(env, system), history);
     const int nCtx = static_cast<int>(llama_n_ctx(session->ctx));
+    const int batchSize = std::min(nCtx, 512);
 
-    std::vector<llama_token> tokens(static_cast<size_t>(nCtx));
-    int tokenCount = llama_tokenize(
-        session->vocab, prompt.data(), static_cast<int32_t>(prompt.size()),
-        tokens.data(), static_cast<int32_t>(tokens.size()), true, true);
-    if (tokenCount < 0) {
-        tokens.resize(static_cast<size_t>(-tokenCount));
-        tokenCount = llama_tokenize(
+    if (!images.empty()) {
+        std::vector<mtmd_bitmap *> bitmaps;
+        std::vector<mtmd_helper_video *> videos;
+        const mtmd_helper_init_opt opt = mtmd_helper_init_opt_default();
+        for (const auto & image : images) {
+            auto wrapper = mtmd_helper_bitmap_init_from_file(
+                session->mctx, image.c_str(), false, opt);
+            if (wrapper.bitmap != nullptr) bitmaps.push_back(wrapper.bitmap);
+            if (wrapper.video_ctx != nullptr) videos.push_back(wrapper.video_ctx);
+        }
+        auto cleanupMedia = [&]() {
+            for (auto * bitmap : bitmaps) mtmd_bitmap_free(bitmap);
+            for (auto * video : videos) mtmd_helper_video_free(video);
+            bitmaps.clear();
+            videos.clear();
+        };
+        if (bitmaps.size() != images.size()) {
+            LOGE("Could not load %zu of %zu attached images", images.size() - bitmaps.size(), images.size());
+            cleanupMedia();
+            return -5;
+        }
+        mtmd_input_chunks * chunks = mtmd_input_chunks_init();
+        mtmd_input_text input{prompt.c_str(), prompt.size(), true, true};
+        int32_t result = mtmd_tokenize(session->mctx, chunks, &input, bitmaps.data(), bitmaps.size());
+        if (result != 0) {
+            LOGE("mtmd_tokenize failed: %d", result);
+            mtmd_input_chunks_free(chunks);
+            cleanupMedia();
+            return -2;
+        }
+        llama_pos newPast = 0;
+        result = mtmd_helper_eval_chunks(
+            session->mctx, session->ctx, chunks, 0, 0, batchSize, true, &newPast);
+        mtmd_input_chunks_free(chunks);
+        cleanupMedia();
+        if (result != 0) {
+            LOGE("mtmd eval failed: %d", result);
+            return -2;
+        }
+    } else {
+        std::vector<llama_token> tokens(static_cast<size_t>(nCtx));
+        int tokenCount = llama_tokenize(
             session->vocab, prompt.data(), static_cast<int32_t>(prompt.size()),
             tokens.data(), static_cast<int32_t>(tokens.size()), true, true);
-    }
-    if (tokenCount <= 0) return -1;
-    tokens.resize(static_cast<size_t>(tokenCount));
+        if (tokenCount < 0) {
+            tokens.resize(static_cast<size_t>(-tokenCount));
+            tokenCount = llama_tokenize(
+                session->vocab, prompt.data(), static_cast<int32_t>(prompt.size()),
+                tokens.data(), static_cast<int32_t>(tokens.size()), true, true);
+        }
+        if (tokenCount <= 0) return -1;
+        tokens.resize(static_cast<size_t>(tokenCount));
 
-    int budget = nCtx - maxTokens - 8;
-    if (budget < 16) budget = std::max(16, nCtx / 2);
-    if (static_cast<int>(tokens.size()) > budget) {
-        // Over budget: keep the template/system head (the model needs its
-        // opening structure) plus the most recent tokens, dropping the
-        // middle. Keeping only the tail previously cut the chat template
-        // apart and produced silence or garbage.
-        const size_t headKeep = std::min<size_t>(tokens.size(), 256);
-        const size_t tailKeep = static_cast<size_t>(budget) - headKeep;
-        std::vector<llama_token> kept(
-            tokens.begin(),
-            tokens.begin() + static_cast<long>(headKeep));
-        kept.insert(
-            kept.end(),
-            tokens.end() - static_cast<long>(tailKeep),
-            tokens.end());
-        tokens.swap(kept);
+        int budget = nCtx - maxTokens - 8;
+        if (budget < 16) budget = std::max(16, nCtx / 2);
+        if (static_cast<int>(tokens.size()) > budget) {
+            // Over budget: keep the template/system head (the model needs its
+            // opening structure) plus the most recent tokens, dropping the
+            // middle. Keeping only the tail previously cut the chat template
+            // apart and produced silence or garbage.
+            const size_t headKeep = std::min<size_t>(tokens.size(), 256);
+            const size_t tailKeep = static_cast<size_t>(budget) - headKeep;
+            std::vector<llama_token> kept(
+                tokens.begin(),
+                tokens.begin() + static_cast<long>(headKeep));
+            kept.insert(
+                kept.end(),
+                tokens.end() - static_cast<long>(tailKeep),
+                tokens.end());
+            tokens.swap(kept);
+        }
+
+        for (size_t offset = 0; offset < tokens.size(); offset += batchSize) {
+            size_t end = std::min(tokens.size(), offset + batchSize);
+            llama_batch batch = llama_batch_get_one(tokens.data() + offset, static_cast<int32_t>(end - offset));
+            if (llama_decode(session->ctx, batch) != 0) return -2;
+            if (session->cancelled.load()) return -3;
+        }
     }
 
     jclass callbackClass = env->GetObjectClass(callback);
@@ -362,14 +456,6 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
         // A renamed/missing callback must fail the generation, never crash.
         env->ExceptionClear();
         return -3;
-    }
-
-    const int batchSize = std::min(nCtx, 512);
-    for (size_t offset = 0; offset < tokens.size(); offset += batchSize) {
-        size_t end = std::min(tokens.size(), offset + batchSize);
-        llama_batch batch = llama_batch_get_one(tokens.data() + offset, static_cast<int32_t>(end - offset));
-        if (llama_decode(session->ctx, batch) != 0) return -2;
-        if (session->cancelled.load()) return -3;
     }
 
     llama_sampler_chain_params samplerParams = llama_sampler_chain_default_params();
@@ -457,6 +543,12 @@ Java_com_agentdeck_app_data_LocalEngine_nativeGenerate(
     return generated;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_agentdeck_app_data_LocalEngine_nativeVisionReady(JNIEnv *, jobject, jlong handle) {
+    auto * session = reinterpret_cast<Session *>(handle);
+    return session != nullptr && session->mctx != nullptr ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_agentdeck_app_data_LocalEngine_nativeCancel(JNIEnv *, jobject, jlong handle) {
     auto * session = reinterpret_cast<Session *>(handle);
@@ -469,6 +561,7 @@ Java_com_agentdeck_app_data_LocalEngine_nativeFree(JNIEnv *, jobject, jlong hand
     if (session == nullptr) return;
     session->cancelled.store(true);
     std::lock_guard<std::mutex> lock(session->mutex);
+    if (session->mctx != nullptr) mtmd_free(session->mctx);
     if (session->ctx != nullptr) llama_free(session->ctx);
     if (session->model != nullptr) llama_model_free(session->model);
     delete session;

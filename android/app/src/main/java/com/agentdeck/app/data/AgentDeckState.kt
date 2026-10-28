@@ -971,7 +971,13 @@ class AgentDeckState(
             modelJobs[modelId] = scope.launch {
                 val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
                 val handle = withContext(Dispatchers.Default) {
-                    LocalEngine.nativeLoad(imported.path, threads, LOCAL_CONTEXT_SIZE, accelerator)
+                    LocalEngine.nativeLoad(
+                        imported.path,
+                        imported.mmprojPath.orEmpty(),
+                        threads,
+                        LOCAL_CONTEXT_SIZE,
+                        accelerator
+                    )
                 }
                 val updated = model(modelId) ?: return@launch
                 if (updated.localState != LocalModelState.LOADING) {
@@ -985,7 +991,14 @@ class AgentDeckState(
                     localHandles[modelId] = handle
                     updateModel(modelId) { it.copy(localState = LocalModelState.READY) }
                     val backend = LocalEngine.lastBackend()
-                    toast("${imported.name} loaded · $backend")
+                    val vision = imported.mmprojPath != null &&
+                        runCatching { LocalEngine.nativeVisionReady(handle) }.getOrDefault(false)
+                    val visionLabel = when {
+                        imported.mmprojPath == null -> ""
+                        vision -> " · vision ready"
+                        else -> " · projector failed"
+                    }
+                    toast("${imported.name} loaded · $backend$visionLabel")
                 }
             }
             return
@@ -1052,6 +1065,9 @@ class AgentDeckState(
         modelImporting = name
         return try {
             withContext(Dispatchers.IO) {
+                if (name.contains("mmproj", ignoreCase = true)) {
+                    return@withContext attachVisionProjector(uri, name)
+                }
                 val directory = File(appContext.filesDir, "models").apply { mkdirs() }
                 val id = "local-" + UUID.randomUUID().toString().take(8)
                 val target = File(directory, "$id.gguf")
@@ -1097,6 +1113,52 @@ class AgentDeckState(
         }
     }
 
+    private fun attachVisionProjector(uri: Uri, name: String): String {
+        val directory = File(appContext.filesDir, "models").apply { mkdirs() }
+        val target = File(directory, "vision-" + UUID.randomUUID().toString().take(8) + ".gguf")
+        val copied = runCatching {
+            appContext.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            } ?: error("Could not open that file")
+        }.isSuccess
+        if (!copied) {
+            target.delete()
+            return "Could not read that projector file."
+        }
+        val magic = ByteArray(4)
+        val headerOk = runCatching {
+            target.inputStream().use { it.read(magic) } == 4 && String(magic) == "GGUF"
+        }.getOrDefault(false)
+        if (!headerOk || target.length() < 1_000_000L) {
+            target.delete()
+            return "That file is not a vision projector GGUF."
+        }
+        val match = importedModels
+            .filter { LocalModelRegistry.projectorMatchesModel(it.name, name) }
+            .maxByOrNull { LocalModelRegistry.visionNameTokens(it.name).size }
+            ?: run {
+                target.delete()
+                return "No matching local model. Import the model first, then its mmproj file."
+            }
+        match.mmprojPath?.let { old ->
+            if (old != target.absolutePath) runCatching { File(old).delete() }
+        }
+        val updated = importedModels.map {
+            if (it.id == match.id) it.copy(mmprojPath = target.absolutePath) else it
+        }
+        importedModels = updated
+        config.localModelsJson = LocalModelRegistry.encode(updated)
+        modelJobs.remove(match.id)?.cancel()
+        localHandles.remove(match.id)?.let { handle ->
+            scope.launch(Dispatchers.Default) {
+                LocalEngine.nativeCancel(handle)
+                LocalEngine.nativeFree(handle)
+            }
+        }
+        updateModel(match.id) { it.copy(localState = LocalModelState.UNLOADED) }
+        return "Vision projector attached to ${match.name} · load it again"
+    }
+
     fun removeLocalModel(modelId: String) {
         val imported = importedModels.firstOrNull { it.id == modelId } ?: return
         localStopFlags.keys
@@ -1110,6 +1172,7 @@ class AgentDeckState(
             }
         }
         runCatching { File(imported.path).delete() }
+        imported.mmprojPath?.let { runCatching { File(it).delete() } }
         importedModels = importedModels - imported
         config.localModelsJson = LocalModelRegistry.encode(importedModels)
         data = data.copy(models = data.models.filterNot { it.id == modelId })
@@ -2298,6 +2361,24 @@ class AgentDeckState(
             .toList()
     }
 
+    /** Absolute workspace paths of the latest attached images for the local engine. */
+    private suspend fun localImagePaths(task: Task): List<String> = withContext(Dispatchers.IO) {
+        val message = task.messages.lastOrNull { candidate ->
+            candidate.role == MessageRole.USER &&
+                candidate.attachments.any { ImageInput.isImage(it.name) }
+        } ?: return@withContext emptyList()
+        val projectId = task.projectId.ifBlank { "default" }
+        message.attachments.asSequence()
+            .filter { ImageInput.isImage(it.name) }
+            .take(ImageInput.MAX_IMAGES)
+            .mapNotNull { attachment ->
+                runCatching {
+                    workspace.safeFile(projectId, attachment.path).absolutePath
+                }.getOrNull()
+            }
+            .toList()
+    }
+
     private fun attachImagesToLastUserTurn(
         turns: List<CloudTurn>,
         images: List<String>
@@ -2345,7 +2426,7 @@ class AgentDeckState(
             val cfg = cloudConfig.copy(
                 model = initial.cloudModel?.takeIf { it.isNotBlank() } ?: cloudConfig.model
             )
-            val images = if (usingCloud) imageDataUrls(initial) else emptyList()
+            val images = if (usingCloud) imageDataUrls(initial) else localImagePaths(initial)
             val systemPrompt = ToolParser.buildSystemPrompt(
                 coding = coding,
                 memorySnapshot = memoryStore.snapshot(),
@@ -2362,8 +2443,12 @@ class AgentDeckState(
                     dropTrailingAssistant,
                     imagesVisible = images.isNotEmpty()
                 )
-                dropTrailingAssistant -> buildLocalTurns(initial.messages, dropTrailingAssistant = true)
-                else -> buildLocalTurns(initial.messages)
+                dropTrailingAssistant -> buildLocalTurns(
+                    initial.messages,
+                    dropTrailingAssistant = true,
+                    imagesVisible = images.isNotEmpty()
+                )
+                else -> buildLocalTurns(initial.messages, imagesVisible = images.isNotEmpty())
             }
             val modelTurns = attachImagesToLastUserTurn(baseTurns, images)
             var extraTurns = emptyList<CloudTurn>()
@@ -2445,7 +2530,7 @@ class AgentDeckState(
                             }
                         )
                     } else {
-                        localAgentReply(taskId, initial, modelTurns + extraTurns, systemPrompt)
+                        localAgentReply(taskId, initial, modelTurns + extraTurns, systemPrompt, images)
                     } ?: run {
                         candidateIndex++
                         if (usingCloud && candidateIndex < modelCandidates.size && !lastCloudRateLimited) {
@@ -2676,7 +2761,8 @@ class AgentDeckState(
         taskId: String,
         initial: Task,
         turns: List<CloudTurn>,
-        systemPrompt: String
+        systemPrompt: String,
+        images: List<String> = emptyList()
     ): String? {
         val handle = localHandles[initial.modelId]
         val imported = importedModels.firstOrNull { it.id == initial.modelId }
@@ -2685,6 +2771,14 @@ class AgentDeckState(
                 taskId,
                 "Local model not loaded",
                 "Load this model in Settings → On-device models, then send a message to continue."
+            )
+            return null
+        }
+        if (images.isNotEmpty() && imported.mmprojPath == null) {
+            addSystemNotice(
+                taskId,
+                "Vision projector needed",
+                "This local model can't see images yet. Download the matching mmproj GGUF and import it with Import model, then load the model again."
             )
             return null
         }
@@ -2702,7 +2796,8 @@ class AgentDeckState(
         val result = withContext(Dispatchers.Default) {
             val buffer = StringBuilder()
             val code = LocalEngine.nativeGenerate(
-                handle, systemPrompt, roles, contents, LOCAL_MAX_TOKENS, 0.7f, 0.9f,
+                handle, systemPrompt, roles, contents, images.toTypedArray(),
+                LOCAL_MAX_TOKENS, 0.7f, 0.9f,
                 object : LocalEngine.TokenCallback {
                     override fun onToken(text: String): Boolean {
                         buffer.append(text)
@@ -2761,7 +2856,12 @@ class AgentDeckState(
                     messages = it.messages + Message(
                         id = newMessageId(),
                         role = MessageRole.SYSTEM,
-                        text = "No reply — the local model returned no text (engine code ${result.first}). Try again or use a cloud model.",
+                        text = when (result.first) {
+                            -4 -> "Vision not loaded.\nThis model has no active vision projector. Import the matching mmproj and load the model again."
+                            -5 -> "The image couldn't be read.\nAttach a JPEG or PNG image and try again."
+                            -2 -> "The local engine couldn't process this prompt or image.\nTry a smaller image or a shorter message."
+                            else -> "No reply — the local model returned no text (engine code ${result.first}). Try again or use a cloud model."
+                        },
                         at = now
                     )
                 )

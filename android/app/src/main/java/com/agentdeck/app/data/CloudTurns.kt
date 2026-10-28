@@ -86,7 +86,8 @@ internal fun buildCloudTurns(
 /** Same shape as [buildCloudTurns] with a budget that fits the on-device context. */
 internal fun buildLocalTurns(
     messages: List<Message>,
-    dropTrailingAssistant: Boolean = false
+    dropTrailingAssistant: Boolean = false,
+    imagesVisible: Boolean = false
 ): List<CloudTurn> {
     val filtered = messages.filter {
         (it.role == MessageRole.USER || it.role == MessageRole.AGENT) &&
@@ -101,7 +102,7 @@ internal fun buildLocalTurns(
     var total = 0
     val turns = ArrayDeque<CloudTurn>()
     for (message in history.asReversed()) {
-        val text = message.modelText().take(MAX_LOCAL_TURN_CHARS)
+        val text = message.modelText(imagesVisible).take(MAX_LOCAL_TURN_CHARS)
         if (total + text.length > MAX_LOCAL_CONTEXT_CHARS && turns.isNotEmpty()) break
         total += text.length
         turns.addFirst(

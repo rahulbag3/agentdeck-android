@@ -61,7 +61,7 @@ install_lib() {
 # Standard: runtime-dispatch CPU variants. RPC is intentionally excluded: ggml
 # loads every backend in the directory and the RPC backend hangs in-app.
 rm -f "$APP/standard/jniLibs/arm64-v8a/"*.so
-for lib in libllama.so libggml.so libggml-base.so; do
+for lib in libllama.so libggml.so libggml-base.so libmtmd.so; do
   install_lib "$CPU_DIR/$lib" "$APP/standard/jniLibs/arm64-v8a"
 done
 for lib in "$CPU_DIR"/libggml-cpu-android_*.so; do
@@ -72,7 +72,7 @@ rm -f "$APP/standard/jniLibs/arm64-v8a/libggml-rpc.so"
 # Snapdragon: statically linked CPU + OpenCL + Hexagon backends.
 rm -f "$APP/snapdragon/jniLibs/arm64-v8a/"*.so
 for lib in libllama.so libggml.so libggml-base.so libggml-cpu.so libggml-rpc.so \
-           libggml-opencl.so libggml-hexagon.so; do
+           libggml-opencl.so libggml-hexagon.so libmtmd.so; do
   install_lib "$SD_DIR/$lib" "$APP/snapdragon/jniLibs/arm64-v8a"
 done
 for lib in "$SD_DIR"/libggml-htp-v*.so; do
@@ -85,6 +85,7 @@ if [ -f "$HEADER_INC/llama.h" ]; then
   cp "$HEADER_INC"/ggml*.h "$APP/main/cpp/llama/include/" 2>/dev/null || true
   cp "$HEADER_INC/gguf.h" "$APP/main/cpp/llama/include/" 2>/dev/null || true
   cp "$HEADER_INC/llama-cpp.h" "$APP/main/cpp/llama/include/" 2>/dev/null || true
+  cp "$HEADER_INC"/mtmd*.h "$APP/main/cpp/llama/include/" 2>/dev/null || true
 fi
 
 echo "Installed standard and Snapdragon arm64 libraries for $TAG."

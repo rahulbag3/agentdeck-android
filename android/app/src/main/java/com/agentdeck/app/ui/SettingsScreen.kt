@@ -550,7 +550,7 @@ fun SettingsScreen(state: AgentDeckState) {
                         Column(Modifier.weight(1f)) {
                             Text("Import a GGUF model", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                             Text(
-                                "Pick a .gguf file from this device. Q4 1–2B models need roughly 1–2 GB of RAM.",
+                                "Pick a .gguf model, or import the matching mmproj-*.gguf to add vision to an imported model. Q4 1–2B models need roughly 1–2 GB of RAM.",
                                 fontSize = 10.sp,
                                 lineHeight = 14.sp,
                                 color = Muted
@@ -923,6 +923,7 @@ private fun SettingsLabel(text: String) {
 private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
     val localState = model.localState ?: LocalModelState.NOT_IMPORTED
     val tone = modelStateTone(localState)
+    val vision = state.importedModels.firstOrNull { it.id == model.id }?.mmprojPath != null
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -940,15 +941,28 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
         Spacer(Modifier.width(9.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(model.name, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    model.name,
+                    modifier = Modifier.weight(1f, fill = false),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(Modifier.width(6.dp))
                 AdTag(localState.label, tone.bg, tone.fg)
+                if (vision) {
+                    Spacer(Modifier.width(5.dp))
+                    AdTag("VISION", VioletSoft, VioletInk)
+                }
             }
             Text(
                 buildString {
                     append(model.quantization ?: "GGUF")
                     model.sizeGB?.let { append(" · ${String.format(Locale.US, "%.2f", it)} GB") }
                     append(" · ${model.contextK ?: 2}K context · on this device")
+                    if (vision) append(" · vision")
                 },
                 fontSize = 9.sp,
                 color = Muted2,

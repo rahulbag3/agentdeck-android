@@ -18,6 +18,7 @@ target_compile_options(agentdeck_llama PRIVATE -O2 -fvisibility=hidden)
 
 target_link_libraries(agentdeck_llama PRIVATE
     "${LLAMA_LIBS}/libllama.so"
+    "${LLAMA_LIBS}/libmtmd.so"
     "${LLAMA_LIBS}/libggml.so"
     "${LLAMA_LIBS}/libggml-base.so"
     log)

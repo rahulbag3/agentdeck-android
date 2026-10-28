@@ -45,14 +45,14 @@ rm -rf "$BUILD"
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_EXAMPLES=OFF \
   -DLLAMA_BUILD_SERVER=OFF \
-  -DLLAMA_BUILD_TOOLS=OFF \
+  -DLLAMA_BUILD_TOOLS=ON \
   -DGGML_NATIVE=OFF \
   -DGGML_OPENMP=OFF \
   -DGGML_LLAMAFILE=ON
-"$CMAKE" --build "$BUILD" --target llama
+"$CMAKE" --build "$BUILD" --target llama mtmd
 
 mkdir -p "$DEST"
-for lib in libllama.so libggml.so libggml-base.so libggml-cpu.so; do
+for lib in libllama.so libggml.so libggml-base.so libggml-cpu.so libmtmd.so; do
   cp "$BUILD/bin/$lib" "$DEST/$lib"
   "$STRIP" "$DEST/$lib"
 done

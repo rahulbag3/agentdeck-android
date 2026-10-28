@@ -1,6 +1,7 @@
 package com.agentdeck.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -54,5 +55,55 @@ class LocalModelRegistryTest {
         assertEquals("Local model", decoded.first().name)
         assertEquals(0L, decoded.first().sizeBytes)
         assertEquals(0L, decoded.first().importedAt)
+        assertEquals(null, decoded.first().mmprojPath)
+    }
+
+    @Test
+    fun `projector matches the model regardless of quantization`() {
+        assertTrue(
+            LocalModelRegistry.projectorMatchesModel(
+                "Qwen3VL-4B-Instruct-Q4_K_M",
+                "mmproj-Qwen3VL-4B-Instruct-Q8_0"
+            )
+        )
+        assertTrue(
+            LocalModelRegistry.projectorMatchesModel(
+                "Qwen3VL-4B-Instruct",
+                "mmproj-Qwen3VL-4B-Instruct-Q8_0"
+            )
+        )
+    }
+
+    @Test
+    fun `a different model family does not match`() {
+        assertFalse(
+            LocalModelRegistry.projectorMatchesModel(
+                "Qwen3.5-4B-Q4_K_M",
+                "mmproj-Qwen3VL-4B-Instruct-Q8_0"
+            )
+        )
+        assertFalse(
+            LocalModelRegistry.projectorMatchesModel(
+                "Llama-3.2-1B-Q4_0",
+                "mmproj-Qwen3VL-4B-Instruct-Q8_0"
+            )
+        )
+    }
+
+    @Test
+    fun `projector path survives registry encoding`() {
+        val models = listOf(
+            ImportedModel(
+                id = "local-1",
+                name = "Qwen3VL-4B-Instruct-Q4_K_M",
+                path = "/models/local-1.gguf",
+                sizeBytes = 2_500_000_000,
+                importedAt = 1,
+                mmprojPath = "/models/vision-1.gguf"
+            )
+        )
+
+        val decoded = LocalModelRegistry.decode(LocalModelRegistry.encode(models))
+        assertEquals("/models/vision-1.gguf", decoded.single().mmprojPath)
     }
 }

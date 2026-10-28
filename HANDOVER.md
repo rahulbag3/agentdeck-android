@@ -118,7 +118,8 @@ The user explicitly kept in scope:
   - Picked files are copied into the project workspace under `attachments/` and shown as draft chips; choosing a file no longer triggers an immediate send.
   - Chat prompts can open text attachments with `read`; the parser accepts provider aliases (`read_file`, `file_path`, JSON-in-XML hybrids) and maps sandbox paths such as `/home/user/workspace/attachments/…` back to the workspace.
   - Images are encoded to data URLs (max 1408 px, up to 3) and sent to cloud models as OpenAI-style image content; a text-only model rejects them, the app retries without images and shows a notice.
-  - Verified with `dots-studio/dots-3-note-preview:free`: it quoted the caption inside the attached magazine image and described the portrait. PDFs are not rendered as images, and the local llama.cpp runtime has no mtmd/mmproj vision path yet.
+  - Verified with `dots-studio/dots-3-note-preview:free`: it quoted the caption inside the attached magazine image and described the portrait.
+  - Local vision is wired through the bundled `libmtmd`: importing a matching `mmproj-*.gguf` attaches it to the model (shown as a VISION tag), and images are passed as workspace file paths. Verified Qwen3VL-4B-Instruct Q4_K_M + mmproj Q8_0 describing the attached JPG on the 11T Pro. CPU image prefill takes minutes; PDFs are not rendered.
 - Host disconnect handling:
   - Disconnecting while a host run is active stops the run and marks the task `Failed` with a retryable `Host disconnected` failure.
   - Reconnecting leaves tasks stopped until the user retries; a retry clears the old failure.
@@ -433,8 +434,9 @@ Known gap: local models still do not read the GitHub snapshot (cloud-only).
 - Honest limits: web_search scrapes DDG (may break — it reports instead of
   faking); http calls send data off-device and are always approved first;
   memory is plaintext JSON (user-inspectable); attachments are copied into the
-  workspace, text files are opened with the read tool, and images go to cloud
-  vision models (local vision and PDF page rendering are not implemented); local models are not streamed in the loop (blocking per
+  workspace, text files are opened with the read tool, images go to cloud
+  vision models, and local vision works with an imported mmproj (CPU-only and
+  slow; PDF page rendering is not implemented); local models are not streamed in the loop (blocking per
   step).
 
 **On-device agent harness (2026-10-25)** — the core host-independent execution path:

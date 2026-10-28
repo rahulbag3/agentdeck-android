@@ -39,12 +39,14 @@ object LocalEngine {
 
     external fun nativeLoad(
         path: String,
+        mmprojPath: String,
         threads: Int,
         contextSize: Int,
         accelerator: String
     ): Long
     external fun nativeFree(handle: Long)
     external fun nativeCancel(handle: Long)
+    external fun nativeVisionReady(handle: Long): Boolean
     /** Backend devices reported by ggml, e.g. CPU, GPUOpenCL, HTP0:0. */
     fun devices(): List<String> {
         if (!available) return emptyList()
@@ -67,6 +69,7 @@ object LocalEngine {
         system: String,
         roles: Array<String>,
         contents: Array<String>,
+        imagePaths: Array<String>,
         maxTokens: Int,
         temperature: Float,
         topP: Float,
