@@ -2424,10 +2424,13 @@ class AgentDeckState(
 
     /** Absolute workspace paths of the latest attached images for the local engine. */
     private suspend fun localImagePaths(task: Task): List<String> = withContext(Dispatchers.IO) {
-        val message = task.messages.lastOrNull { candidate ->
-            candidate.role == MessageRole.USER &&
-                candidate.attachments.any { ImageInput.isImage(it.name) }
-        } ?: return@withContext emptyList()
+        // Only images attached to the current message are re-encoded. A later
+        // text-only turn must not trigger an expensive image prefill again.
+        val message = task.messages.lastOrNull { it.role == MessageRole.USER }
+            ?: return@withContext emptyList()
+        if (message.attachments.none { ImageInput.isImage(it.name) }) {
+            return@withContext emptyList()
+        }
         val projectId = task.projectId.ifBlank { "default" }
         message.attachments.asSequence()
             .filter { ImageInput.isImage(it.name) }
