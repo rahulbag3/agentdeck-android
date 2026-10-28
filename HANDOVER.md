@@ -120,6 +120,7 @@ The user explicitly kept in scope:
   - Images are encoded to data URLs (max 1408 px, up to 3) and sent to cloud models as OpenAI-style image content; a text-only model rejects them, the app retries without images and shows a notice.
   - Verified with `dots-studio/dots-3-note-preview:free`: it quoted the caption inside the attached magazine image and described the portrait.
   - Local vision is wired through the bundled `libmtmd`: importing a matching `mmproj-*.gguf` attaches it to the model (shown as a VISION tag), and images are passed as workspace file paths. Verified Qwen3VL-4B-Instruct Q4_K_M + mmproj Q8_0 describing the attached JPG on the 11T Pro. CPU image prefill takes minutes; PDFs are not rendered.
+  - Import performs one-time GGUF inspection (architecture + tensor names): files are labelled TEXT when no vision tensors/metadata exist, VISION when a vision family or attached projector is present, and an mmproj is recognized from `clip` metadata as well as its filename. The unsloth Qwen3.5-4B-Q4_K_M GGUF is text-only in practice (426 tensors, zero vision tensors, no mmproj published), despite the base model being multimodal; the app now labels it TEXT.
 - Host disconnect handling:
   - Disconnecting while a host run is active stops the run and marks the task `Failed` with a retryable `Host disconnected` failure.
   - Reconnecting leaves tasks stopped until the user retries; a retry clears the old failure.

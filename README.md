@@ -181,11 +181,16 @@ models → Import**, then **Load** it. Start a task with that model, or switch a
 existing local conversation to it with **Change**.
 
 Vision models also need their matching projector file. Import the model first,
-then import its `mmproj-*.gguf`; the file is matched by model name and a
-**VISION** tag appears in Settings. Attach a JPEG or PNG to a local chat to use
-it. Image prefill runs on the CPU and takes minutes on a 4B model; PDFs are not
-rendered. Verified with Qwen3VL-4B-Instruct Q4_K_M plus
+then import its `mmproj-*.gguf`; the projector is matched by GGUF metadata and
+model name, and a **VISION** tag appears in Settings. Attach a JPEG or PNG to a
+local chat to use it. Image prefill runs on the CPU and takes minutes on a 4B
+model; PDFs are not rendered. Verified with Qwen3VL-4B-Instruct Q4_K_M plus
 `mmproj-Qwen3VL-4B-Instruct-Q8_0`.
+
+Import inspects the GGUF itself (architecture and tensor names) and labels each
+model **TEXT** or **VISION**, so a multimodal base model converted to a
+text-only GGUF is not mislabelled. A vision label with no projector means the
+file is a vision family but still needs its `mmproj`.
 
 Two APKs are available:
 

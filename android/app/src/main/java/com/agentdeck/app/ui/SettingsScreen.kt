@@ -923,7 +923,10 @@ private fun SettingsLabel(text: String) {
 private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
     val localState = model.localState ?: LocalModelState.NOT_IMPORTED
     val tone = modelStateTone(localState)
-    val vision = state.importedModels.firstOrNull { it.id == model.id }?.mmprojPath != null
+    val imported = state.importedModels.firstOrNull { it.id == model.id }
+    val visionReady = imported?.mmprojPath != null
+    val visionCapable = imported?.visionCapable == true
+    val visionChecked = imported?.visionChecked == true
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -952,9 +955,15 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
                 )
                 Spacer(Modifier.width(6.dp))
                 AdTag(localState.label, tone.bg, tone.fg)
-                if (vision) {
+                if (visionReady) {
                     Spacer(Modifier.width(5.dp))
                     AdTag("VISION", VioletSoft, VioletInk)
+                } else if (visionCapable) {
+                    Spacer(Modifier.width(5.dp))
+                    AdTag("VISION", AmberSoft, AmberInk)
+                } else if (visionChecked) {
+                    Spacer(Modifier.width(5.dp))
+                    AdTag("TEXT", GraySoft, GrayInk)
                 }
             }
             Text(
@@ -962,7 +971,11 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
                     append(model.quantization ?: "GGUF")
                     model.sizeGB?.let { append(" · ${String.format(Locale.US, "%.2f", it)} GB") }
                     append(" · ${model.contextK ?: 2}K context · on this device")
-                    if (vision) append(" · vision")
+                    when {
+                        visionReady -> append(" · vision")
+                        visionCapable -> append(" · projector needed")
+                        visionChecked -> append(" · text-only")
+                    }
                 },
                 fontSize = 9.sp,
                 color = Muted2,

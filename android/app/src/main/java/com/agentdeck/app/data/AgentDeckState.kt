@@ -216,6 +216,7 @@ class AgentDeckState(
         )
         importedModels = LocalModelRegistry.decode(config.localModelsJson)
             .filter { File(it.path).exists() }
+        refreshModelVisionFlags()
         if (importedModels.isNotEmpty()) {
             data = data.copy(models = data.models + importedModels.map { it.toModelOption() })
         }
@@ -1065,9 +1066,6 @@ class AgentDeckState(
         modelImporting = name
         return try {
             withContext(Dispatchers.IO) {
-                if (name.contains("mmproj", ignoreCase = true)) {
-                    return@withContext attachVisionProjector(uri, name)
-                }
                 val directory = File(appContext.filesDir, "models").apply { mkdirs() }
                 val id = "local-" + UUID.randomUUID().toString().take(8)
                 val target = File(directory, "$id.gguf")
@@ -1092,17 +1090,30 @@ class AgentDeckState(
                     target.delete()
                     return@withContext "That model file is too small."
                 }
+                val info = GgufInspector.inspect(target)
+                if (name.contains("mmproj", ignoreCase = true) || info?.projector == true) {
+                    return@withContext attachVisionProjector(target, name)
+                }
+                val visionCapable = info?.hasEmbeddedVision == true ||
+                    GgufInspector.knownVisionFamily(name)
                 val imported = ImportedModel(
                     id = id,
                     name = name,
                     path = target.absolutePath,
                     sizeBytes = target.length(),
-                    importedAt = System.currentTimeMillis()
+                    importedAt = System.currentTimeMillis(),
+                    visionCapable = visionCapable,
+                    visionChecked = true
                 )
                 importedModels = importedModels + imported
                 config.localModelsJson = LocalModelRegistry.encode(importedModels)
                 data = data.copy(models = data.models + imported.toModelOption())
-                "Imported $name · load it to chat"
+                val visionNote = when {
+                    visionCapable -> " · vision projector needed"
+                    info != null -> " · text-only GGUF"
+                    else -> ""
+                }
+                "Imported $name$visionNote · load it to chat"
             }
         } catch (e: CancellationException) {
             throw e
@@ -1113,26 +1124,33 @@ class AgentDeckState(
         }
     }
 
-    private fun attachVisionProjector(uri: Uri, name: String): String {
-        val directory = File(appContext.filesDir, "models").apply { mkdirs() }
-        val target = File(directory, "vision-" + UUID.randomUUID().toString().take(8) + ".gguf")
-        val copied = runCatching {
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            } ?: error("Could not open that file")
-        }.isSuccess
-        if (!copied) {
-            target.delete()
-            return "Could not read that projector file."
+    /** Inspects existing model files once so the UI can label vision support. */
+    private fun refreshModelVisionFlags() {
+        val pending = importedModels.filter { !it.visionChecked && File(it.path).exists() }
+        if (pending.isEmpty()) return
+        scope.launch {
+            val results = withContext(Dispatchers.IO) {
+                pending.mapNotNull { model ->
+                    val info = GgufInspector.inspect(File(model.path)) ?: return@mapNotNull null
+                    model.id to (
+                        info.hasEmbeddedVision ||
+                            GgufInspector.knownVisionFamily(model.name)
+                        )
+                }.toMap()
+            }
+            if (results.isEmpty()) return@launch
+            importedModels = importedModels.map { model ->
+                val capable = results[model.id] ?: return@map model
+                model.copy(
+                    visionCapable = capable || model.mmprojPath != null,
+                    visionChecked = true
+                )
+            }
+            config.localModelsJson = LocalModelRegistry.encode(importedModels)
         }
-        val magic = ByteArray(4)
-        val headerOk = runCatching {
-            target.inputStream().use { it.read(magic) } == 4 && String(magic) == "GGUF"
-        }.getOrDefault(false)
-        if (!headerOk || target.length() < 1_000_000L) {
-            target.delete()
-            return "That file is not a vision projector GGUF."
-        }
+    }
+
+    private fun attachVisionProjector(target: File, name: String): String {
         val match = importedModels
             .filter { LocalModelRegistry.projectorMatchesModel(it.name, name) }
             .maxByOrNull { LocalModelRegistry.visionNameTokens(it.name).size }
@@ -1144,7 +1162,15 @@ class AgentDeckState(
             if (old != target.absolutePath) runCatching { File(old).delete() }
         }
         val updated = importedModels.map {
-            if (it.id == match.id) it.copy(mmprojPath = target.absolutePath) else it
+            if (it.id == match.id) {
+                it.copy(
+                    mmprojPath = target.absolutePath,
+                    visionCapable = true,
+                    visionChecked = true
+                )
+            } else {
+                it
+            }
         }
         importedModels = updated
         config.localModelsJson = LocalModelRegistry.encode(updated)

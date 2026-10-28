@@ -10,7 +10,9 @@ data class ImportedModel(
     val path: String,
     val sizeBytes: Long,
     val importedAt: Long,
-    val mmprojPath: String? = null
+    val mmprojPath: String? = null,
+    val visionCapable: Boolean = false,
+    val visionChecked: Boolean = false
 )
 
 /** Persisted catalogue of imported local models. */
@@ -50,6 +52,8 @@ internal object LocalModelRegistry {
                         .put("path", model.path)
                         .put("sizeBytes", model.sizeBytes)
                         .put("importedAt", model.importedAt)
+                        .put("visionCapable", model.visionCapable)
+                        .put("visionChecked", model.visionChecked)
                         .apply { model.mmprojPath?.let { put("mmprojPath", it) } }
                 )
             }
@@ -68,7 +72,9 @@ internal object LocalModelRegistry {
                 path = path,
                 sizeBytes = item.optLong("sizeBytes", 0L),
                 importedAt = item.optLong("importedAt", 0L),
-                mmprojPath = item.optString("mmprojPath").takeIf { it.isNotBlank() }
+                mmprojPath = item.optString("mmprojPath").takeIf { it.isNotBlank() },
+                visionCapable = item.optBoolean("visionCapable", false),
+                visionChecked = item.optBoolean("visionChecked", false)
             )
         }
         return models

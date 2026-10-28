@@ -99,11 +99,15 @@ class LocalModelRegistryTest {
                 path = "/models/local-1.gguf",
                 sizeBytes = 2_500_000_000,
                 importedAt = 1,
-                mmprojPath = "/models/vision-1.gguf"
+                mmprojPath = "/models/vision-1.gguf",
+                visionCapable = true,
+                visionChecked = true
             )
         )
 
-        val decoded = LocalModelRegistry.decode(LocalModelRegistry.encode(models))
-        assertEquals("/models/vision-1.gguf", decoded.single().mmprojPath)
+        val decoded = LocalModelRegistry.decode(LocalModelRegistry.encode(models)).single()
+        assertEquals("/models/vision-1.gguf", decoded.mmprojPath)
+        assertEquals(true, decoded.visionCapable)
+        assertEquals(true, decoded.visionChecked)
     }
 }
