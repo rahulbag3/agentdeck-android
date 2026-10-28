@@ -749,9 +749,10 @@ private fun MessageBlock(
             )
         }
         Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(clockTime(message.at), fontSize = 9.sp, color = Muted2)
             if (message.role == MessageRole.AGENT) {
+                Spacer(Modifier.width(4.dp))
                 Icon(
                     Icons.Outlined.CheckCircle,
                     contentDescription = null,
@@ -759,29 +760,32 @@ private fun MessageBlock(
                     tint = GreenInk
                 )
             }
+            Spacer(Modifier.width(8.dp))
             val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-            Icon(
-                Icons.Outlined.ContentCopy,
-                contentDescription = "Copy message",
-                modifier = Modifier
-                    .size(11.dp)
-                    .clickable {
-                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(message.text))
-                        state.notifyUser("Copied to clipboard")
-                    },
-                tint = Muted2
-            )
+            ReplyAction(
+                description = "Copy message",
+                onClick = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(message.text))
+                    state.notifyUser("Copied to clipboard")
+                }
+            ) {
+                Icon(
+                    Icons.Outlined.ContentCopy,
+                    contentDescription = null,
+                    modifier = Modifier.size(11.dp),
+                    tint = Muted2
+                )
+            }
             if (message.role == MessageRole.AGENT && exporter != null) {
-                Spacer(Modifier.width(2.dp))
                 Box {
-                    Icon(
-                        Icons.Outlined.FileDownload,
-                        contentDescription = "Save reply",
-                        modifier = Modifier
-                            .size(11.dp)
-                            .clickable { saveOpen = true },
-                        tint = Muted2
-                    )
+                    ReplyAction("Save reply", onClick = { saveOpen = true }) {
+                        Icon(
+                            Icons.Outlined.FileDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(11.dp),
+                            tint = Muted2
+                        )
+                    }
                     ReplySaveMenu(
                         expanded = saveOpen,
                         onDismiss = { saveOpen = false },
@@ -792,28 +796,32 @@ private fun MessageBlock(
                 }
             }
             if (toolCalls.isNotEmpty()) {
-                Spacer(Modifier.width(2.dp))
-                Row(
+                Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(5.dp))
+                        .height(18.dp)
+                        .clip(RoundedCornerShape(4.dp))
                         .clickable { toolsOpen = !toolsOpen }
-                        .padding(horizontal = 2.dp, vertical = 1.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        .padding(horizontal = 2.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Outlined.Build,
-                        contentDescription = "Tool calls",
-                        modifier = Modifier.size(11.dp),
-                        tint = if (toolCalls.all { it.ok }) GreenInk else RedInk
-                    )
-                    if (toolCalls.size > 1) {
-                        Text(
-                            toolCalls.size.toString(),
-                            fontFamily = Mono,
-                            fontSize = 8.5.sp,
-                            color = Muted2
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Build,
+                            contentDescription = "Tool calls",
+                            modifier = Modifier.size(11.dp),
+                            tint = if (toolCalls.all { it.ok }) GreenInk else RedInk
                         )
+                        if (toolCalls.size > 1) {
+                            Text(
+                                toolCalls.size.toString(),
+                                fontFamily = Mono,
+                                fontSize = 8.5.sp,
+                                color = Muted2
+                            )
+                        }
                     }
                 }
             }
@@ -822,6 +830,23 @@ private fun MessageBlock(
             Spacer(Modifier.height(6.dp))
             MergedToolsPanel(toolCalls)
         }
+    }
+}
+
+@Composable
+private fun ReplyAction(
+    description: String,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(18.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .clickable(onClickLabel = description, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
     }
 }
 
@@ -1716,23 +1741,6 @@ private fun ComposerBar(
                         )
                     }
                 }
-            }
-            val hint = when {
-                streamingHost -> "Host run in progress. Stop to cancel the agent on the host; reported changes stay."
-                streamingLocal -> "Running on this phone. Stop to cancel at the next step; text already produced is kept."
-                streamingCloud -> "Cloud reply in progress. Stop to cancel; text already produced is kept."
-                task.status == TaskStatus.FAILED -> "This task is stopped. Messages are saved; retry the task to resume."
-                task.permissionRequest != null -> "Resolve the permission request above, or reply below."
-                else -> ""
-            }
-            if (hint.isNotBlank()) {
-                Text(
-                    hint,
-                    fontSize = 9.sp,
-                    lineHeight = 12.sp,
-                    color = Muted2,
-                    modifier = Modifier.padding(top = 5.dp, start = 2.dp)
-                )
             }
         }
 }
