@@ -61,6 +61,7 @@ import com.agentdeck.app.ui.theme.GraySoft
 import com.agentdeck.app.ui.theme.GreenInk
 import com.agentdeck.app.ui.theme.GreenSoft
 import com.agentdeck.app.ui.theme.Ink
+import com.agentdeck.app.ui.theme.InkSoft
 import com.agentdeck.app.ui.theme.Line
 import com.agentdeck.app.ui.theme.Muted
 import com.agentdeck.app.ui.theme.Muted2
@@ -74,9 +75,22 @@ import com.agentdeck.app.ui.theme.Surface as AdSurface
 @Composable
 fun HomeScreen(state: AgentDeckState) {
     val recent = state.data.tasks.sortedByDescending { it.updatedAt }.take(5)
+    val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val taskCard: @Composable (Task) -> Unit = { task ->
+        AdTaskCard(
+            task = task,
+            projectName = state.project(task.projectId)?.name ?: "",
+            modelName = state.taskModelName(task),
+            isLocal = state.isLocalTask(task),
+            isCloud = state.isCloudTask(task),
+            onClick = { state.openTask(task.id) },
+            onDelete = { state.deleteTask(task.id) }
+        )
+    }
 
     Column(Modifier.fillMaxSize().background(Surface2)) {
-        HomeTopBar(onAbout = state::openAbout, onSettings = state::openSettings)
+        HomeTopBar(onAbout = state::openAbout)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
@@ -100,12 +114,21 @@ fun HomeScreen(state: AgentDeckState) {
             }
 
             item {
-                Text(
-                    "Recent",
-                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                    color = Ink,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+                Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Recent",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Ink,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        recent.size.toString(),
+                        fontFamily = com.agentdeck.app.ui.theme.Mono,
+                        fontSize = 9.5.sp,
+                        color = Muted2
+                    )
+                }
             }
 
             if (recent.isEmpty()) {
@@ -117,17 +140,21 @@ fun HomeScreen(state: AgentDeckState) {
                         action = null
                     )
                 }
+            } else if (landscape) {
+                items(recent.chunked(2)) { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        row.forEach { task ->
+                            Box(Modifier.weight(1f)) { taskCard(task) }
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
             } else {
                 items(recent, key = { it.id }) { task ->
-                    AdTaskCard(
-                        task = task,
-                        projectName = state.project(task.projectId)?.name ?: "",
-                        modelName = state.taskModelName(task),
-                        isLocal = state.isLocalTask(task),
-                        isCloud = state.isCloudTask(task),
-                        onClick = { state.openTask(task.id) },
-                        onDelete = { state.deleteTask(task.id) }
-                    )
+                    taskCard(task)
                 }
             }
 
@@ -245,29 +272,39 @@ private fun ModeLauncherCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(AdSurface)
-            .border(1.dp, Line, RoundedCornerShape(18.dp))
+            .border(1.dp, Line, RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 15.dp, vertical = 16.dp)
+            .padding(horizontal = 14.dp, vertical = 14.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(BlueSoft),
-            contentAlignment = Alignment.Center
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(25.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Surface2)
+                    .border(1.dp, Line, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    if (title == "Chat") Icons.Outlined.ChatBubbleOutline else Icons.Outlined.Terminal,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = InkSoft
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(title, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+            Spacer(Modifier.weight(1f))
             Icon(
-                if (title == "Chat") Icons.Outlined.ChatBubbleOutline else Icons.Outlined.Terminal,
+                Icons.Outlined.KeyboardArrowRight,
                 contentDescription = null,
-                modifier = Modifier.size(19.dp),
-                tint = BlueInk
+                modifier = Modifier.size(14.dp),
+                tint = Muted2
             )
         }
-        Spacer(Modifier.height(10.dp))
-        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Spacer(Modifier.height(4.dp))
-        Text(subtitle, fontSize = 9.sp, lineHeight = 13.sp, color = Muted2)
+        Spacer(Modifier.height(7.dp))
+        Text(subtitle, fontSize = 9.5.sp, lineHeight = 13.sp, color = Muted2)
     }
 }

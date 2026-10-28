@@ -1,5 +1,13 @@
 package com.agentdeck.app.ui
 
+import android.app.Activity
+import android.content.Intent
+import android.content.res.Configuration
+import android.os.SystemClock
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -34,13 +42,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.CallSplit
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Code
@@ -48,14 +60,19 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RemoveCircleOutline
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Stop
@@ -72,6 +89,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,9 +98,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -93,6 +118,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentdeck.app.data.ActivityEvent
 import com.agentdeck.app.data.AgentDeckState
+import com.agentdeck.app.data.Attachment
 import com.agentdeck.app.data.ChangedFile
 import com.agentdeck.app.data.CheckRun
 import com.agentdeck.app.data.CheckStatus
@@ -123,6 +149,7 @@ import com.agentdeck.app.ui.theme.GreenSoft
 import com.agentdeck.app.ui.theme.Ink
 import com.agentdeck.app.ui.theme.InkSoft
 import com.agentdeck.app.ui.theme.Line
+import com.agentdeck.app.ui.theme.LineStrong
 import com.agentdeck.app.ui.theme.Mono
 import com.agentdeck.app.ui.theme.Muted
 import com.agentdeck.app.ui.theme.Muted2
@@ -164,18 +191,33 @@ fun TaskScreen(state: AgentDeckState, taskId: String) {
 
     Column(Modifier.fillMaxSize().background(if (tab == TaskTab.CHAT) AdSurface else Surface2)) {
         TaskTopBar(task = task, project = project, local = local, cloud = cloud, onBack = state::back)
-        TaskTabs(task = task, active = tab, onSelect = state::selectTaskTab)
+        if (task.kind != TaskKind.CHAT) {
+            TaskTabs(task = task, active = tab, onSelect = state::selectTaskTab)
+        }
         when (tab) {
             TaskTab.CHAT -> {
-                ChatContent(
-                    state = state,
-                    task = task,
-                    project = project,
-                    local = local,
-                    cloud = cloud,
-                    modifier = Modifier.weight(1f)
-                )
-                ComposerBar(state = state, task = task, model = model, local = local, cloud = cloud)
+                var composerHeight by remember(task.id) { mutableStateOf(0) }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    ChatContent(
+                        state = state,
+                        task = task,
+                        project = project,
+                        local = local,
+                        cloud = cloud,
+                        bottomInsetPx = composerHeight,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    ComposerBar(
+                        state = state,
+                        task = task,
+                        model = model,
+                        local = local,
+                        cloud = cloud,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { composerHeight = it.height }
+                    )
+                }
             }
             TaskTab.CHANGES -> {
                 ChangesContent(
@@ -209,18 +251,17 @@ private fun TaskTopBar(task: Task, project: Project, local: Boolean, cloud: Bool
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(AdSurface)
             .statusBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AdIconButton(Icons.Outlined.ArrowBack, "Back", onBack, size = 36.dp)
+        AdIconButton(Icons.Outlined.ArrowBack, "Back", onBack, size = 32.dp)
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 task.title,
-                fontSize = 14.5.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = Ink,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -233,7 +274,7 @@ private fun TaskTopBar(task: Task, project: Project, local: Boolean, cloud: Bool
                 val branchLabel = task.branch.ifBlank { if (cloud) "session" else project.defaultBranch }
                 Text(
                     "$scopeLabel · $branchLabel",
-                    fontSize = 9.5.sp,
+                    fontSize = 9.sp,
                     color = Muted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -251,8 +292,6 @@ private fun TaskTopBar(task: Task, project: Project, local: Boolean, cloud: Bool
                 if (!cloud && !local) HostTag()
             }
         }
-        Spacer(Modifier.width(8.dp))
-        StatusPill(task.status)
     }
 }
 
@@ -281,25 +320,22 @@ private fun TaskTabs(task: Task, active: TaskTab, onSelect: (TaskTab) -> Unit) {
                         Text(
                             tab.label,
                             fontSize = 11.5.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             color = if (selected) Ink else Muted
                         )
                         Spacer(Modifier.width(5.dp))
                         Text(
                             count.toString(),
+                            fontFamily = Mono,
                             fontSize = 8.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (selected) BlueInk else Muted,
-                            modifier = Modifier
-                                .clip(PillShape)
-                                .background(if (selected) BlueSoft else Surface3)
-                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                            color = if (selected) Muted else Muted2
                         )
                     }
                     Box(
                         Modifier
-                            .fillMaxWidth(if (selected) 0.8f else 0f)
+                            .width(18.dp)
                             .height(2.dp)
+                            .clip(RoundedCornerShape(1.dp))
                             .background(if (selected) Ink else Color.Transparent)
                     )
                 }
@@ -316,6 +352,7 @@ private fun ChatContent(
     project: Project,
     local: Boolean,
     cloud: Boolean,
+    bottomInsetPx: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val scroll = rememberScrollState()
@@ -326,13 +363,18 @@ private fun ChatContent(
         delay(80)
         scroll.animateScrollTo(scroll.maxValue)
     }
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(AdSurface)
-            .verticalScroll(scroll)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
-    ) {
+    val bottomPad = 14.dp + with(LocalDensity.current) { bottomInsetPx.toDp() }
+    val exporter = rememberReplyExporter(state::notifyUser)
+    Box(modifier.fillMaxSize().background(AdSurface)) {
+        CompositionLocalProvider(LocalReplyExporter provides exporter) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 760.dp)
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .verticalScroll(scroll)
+                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = bottomPad)
+        ) {
         TaskHostBanner(state, task, local, cloud)
         if (local && task.repoContext != null) {
             InfoBanner(
@@ -361,8 +403,6 @@ private fun ChatContent(
                 PlanCard(task)
                 Spacer(Modifier.height(12.dp))
             }
-            ActivityCard(state = state, task = task)
-            if (task.activity.isNotEmpty()) Spacer(Modifier.height(12.dp))
         }
         Text(
             chatDayLabel(task.createdAt),
@@ -377,17 +417,12 @@ private fun ChatContent(
             MessageBlock(state = state, task = task, local = local, cloud = cloud, message = message)
             Spacer(Modifier.height(15.dp))
         }
-        if (typing) {
-            TypingBlock(modelName = state.taskModelName(task), cloud = cloud)
-            Spacer(Modifier.height(12.dp))
-        }
+        ActivityStickers(state = state, task = task)
         if (!cloud) {
             if (task.plan != null && task.status in listOf(TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.NEEDS_INPUT, TaskStatus.FAILED)) {
                 PlanCard(task)
                 Spacer(Modifier.height(12.dp))
             }
-            ActivityCard(state = state, task = task)
-            if (task.activity.isNotEmpty()) Spacer(Modifier.height(12.dp))
         }
         task.permissionRequest?.let {
             PermissionCard(state = state, task = task, request = it)
@@ -406,6 +441,8 @@ private fun ChatContent(
             if (task.decisions.isNotEmpty()) Spacer(Modifier.height(12.dp))
         }
         Spacer(Modifier.height(8.dp))
+        }
+        }
     }
 }
 
@@ -466,7 +503,8 @@ private fun RepoContextSummary(state: AgentDeckState, task: Task) {
                 modifier = Modifier
                     .size(28.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(GreenSoft),
+                    .background(Surface2)
+                    .border(1.dp, Line, RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(14.dp), tint = GreenInk)
@@ -494,7 +532,115 @@ private fun RepoContextSummary(state: AgentDeckState, task: Task) {
             if (loading) {
                 Text("Refreshing…", fontSize = 9.sp, color = BlueInk)
             } else {
-                Text("View", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = BlueInk)
+                Text("View", fontSize = 9.5.sp, fontWeight = FontWeight.Medium, color = Ink)
+            }
+        }
+    }
+}
+
+/**
+ * Text shown for an agent reply. Reasoning blocks and raw tool syntax are
+ * stripped, and a reply that is only a tool call renders nothing so the
+ * sticker row and approval card carry it instead.
+ */
+private fun agentVisibleText(raw: String): String {
+    val text = raw
+        .replace(Regex("(?s)<think>.*?</think>"), "")
+        .replace(Regex("(?s)<think>.*$"), "")
+        .trim()
+    if (text.isEmpty()) return ""
+    val startsWithToolCall = Regex(
+        "^(`{3,}\\s*agentdeck[-_ ]?tool|<\\s*(invoke|function_call|dots_function_call|tool_call|tool_block)\\b)",
+        RegexOption.IGNORE_CASE
+    ).containsMatchIn(text)
+    if (startsWithToolCall) return ""
+    return text
+        .replace(Regex("(?s)```[ \\t]*agentdeck[-_ ]?tool.*?```", RegexOption.IGNORE_CASE), "")
+        .replace(
+            Regex(
+                "(?s)<\\s*(invoke|function_call|dots_function_call|tool_call|tool_block)\\b.*?</\\s*(invoke|function_call|dots_function_call|tool_call|tool_block)\\s*>",
+                RegexOption.IGNORE_CASE
+            ),
+            ""
+        )
+        .trim()
+}
+
+private val ERROR_NOTICE = Regex(
+    "(stopped|interrupted|failed|error|no reply|missing|unavailable|timed out)",
+    RegexOption.IGNORE_CASE
+)
+private val RETRYABLE_NOTICE = Regex(
+    "(stopped|interrupted|no reply)",
+    RegexOption.IGNORE_CASE
+)
+
+/**
+ * assistant-ui error state: a quiet red-tinted banner where the reply would
+ * have been, naming what went wrong and offering one retry path. Informational
+ * notices reuse the same shape without the red.
+ */
+@Composable
+private fun NoticeBanner(
+    state: AgentDeckState,
+    task: Task,
+    title: String,
+    body: String
+) {
+    val error = ERROR_NOTICE.containsMatchIn(title)
+    val retryable = error && RETRYABLE_NOTICE.containsMatchIn(title) && !state.isTaskBusy(task.id)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = if (error) Color(0x0FD92D20) else AdSurface,
+        border = if (error) null else BorderStroke(1.dp, Line)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                if (error) Icons.Outlined.ErrorOutline else Icons.Outlined.Info,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp).padding(top = 1.dp),
+                tint = (if (error) RedInk else AmberInk).copy(alpha = 0.85f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (error) RedInk else Ink
+                )
+                if (body.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        body,
+                        fontSize = 10.5.sp,
+                        lineHeight = 15.sp,
+                        color = if (error) RedInk.copy(alpha = 0.8f) else Muted
+                    )
+                }
+            }
+            if (retryable) {
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(PillShape)
+                        .clickable { state.retryLastTurn(task.id) }
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Outlined.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = RedInk
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Retry", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = RedInk)
+                }
             }
         }
     }
@@ -508,74 +654,18 @@ private fun MessageBlock(
     cloud: Boolean,
     message: Message
 ) {
+    if (message.role == MessageRole.AGENT && agentVisibleText(message.text).isBlank()) {
+        return
+    }
     if (message.role == MessageRole.SYSTEM) {
+        if (message.text.startsWith("\u2699")) return
         val lines = message.text.lines()
-        val title = lines.firstOrNull().orEmpty()
-        val body = lines.drop(1).joinToString("\n").trim()
-        if (title.startsWith("\u2699")) {
-            val label = title.removePrefix("\u2699 ").trim()
-            val ok = label.contains("\u2192")
-            val name = label.substringBefore("\u2192").substringBefore("\u2717").trim()
-            val result = label.substringAfter("\u2192", "").substringAfter("\u2717", "").trim()
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = AdSurface,
-                border = BorderStroke(1.dp, Line)
-            ) {
-                Column(Modifier.padding(horizontal = 11.dp, vertical = 8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.Build,
-                            contentDescription = null,
-                            modifier = Modifier.size(12.dp),
-                            tint = if (ok) GreenInk else RedInk
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(name, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = Ink, modifier = Modifier.weight(1f))
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = if (ok) GreenSoft else RedSoft
-                        ) {
-                            Text(
-                                if (ok) "Done" else "Failed",
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (ok) GreenInk else RedInk,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                    if (result.isNotBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(result, fontSize = 10.sp, lineHeight = 14.sp, color = Muted, maxLines = 3)
-                    }
-                    Spacer(Modifier.height(3.dp))
-                    Text(clockTime(message.at), fontSize = 8.5.sp, color = Muted2)
-                }
-            }
-        } else {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = AmberSoft,
-                border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEEDaAB))
-            ) {
-                Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.Top) {
-                    Icon(Icons.Outlined.Warning, contentDescription = null, modifier = Modifier.size(14.dp), tint = AmberInk)
-                    Spacer(Modifier.width(7.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(title, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = AmberInk)
-                        if (body.isNotBlank()) {
-                            Spacer(Modifier.height(2.dp))
-                            Text(body, fontSize = 10.5.sp, lineHeight = 15.sp, color = AmberInk.copy(alpha = 0.88f))
-                        }
-                        Spacer(Modifier.height(3.dp))
-                        Text(clockTime(message.at), fontSize = 8.5.sp, color = AmberInk.copy(alpha = 0.65f))
-                    }
-                }
-            }
-        }
+        NoticeBanner(
+            state = state,
+            task = task,
+            title = lines.firstOrNull().orEmpty().ifBlank { "Notice" },
+            body = lines.drop(1).joinToString("\n").trim()
+        )
         return
     }
     if (message.role == MessageRole.USER) {
@@ -584,17 +674,26 @@ private fun MessageBlock(
                 modifier = Modifier.widthIn(max = 330.dp),
                 horizontalAlignment = Alignment.End
             ) {
-                Surface(
-                    color = Ink,
-                    shape = RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp)
-                ) {
-                    Text(
-                        message.text,
-                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
-                        fontSize = 12.5.sp,
-                        lineHeight = 19.sp,
-                        color = androidx.compose.ui.graphics.Color(0xFFF3F5F7)
-                    )
+                if (message.attachments.isNotEmpty()) {
+                    message.attachments.forEach { file ->
+                        AttachmentChip(file = file)
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    Spacer(Modifier.height(2.dp))
+                }
+                if (message.text.isNotBlank()) {
+                    Surface(
+                        color = Ink,
+                        shape = RoundedCornerShape(18.dp, 18.dp, 6.dp, 18.dp)
+                    ) {
+                        Text(
+                            message.text,
+                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
+                            fontSize = 12.5.sp,
+                            lineHeight = 19.sp,
+                            color = AdSurface
+                        )
+                    }
                 }
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -611,6 +710,12 @@ private fun MessageBlock(
         local -> ModelProvider.LOCAL
         else -> ModelProvider.HOST
     }
+    val toolCalls = if (message.role == MessageRole.AGENT) toolsForTurn(task, message) else emptyList()
+    var toolsOpen by remember(message.id) { mutableStateOf(false) }
+    val exporter = LocalReplyExporter.current
+    val visibleText = if (message.role == MessageRole.AGENT) agentVisibleText(message.text) else message.text
+    val fileBase = remember(visibleText) { replyFileBase(visibleText) }
+    var saveOpen by remember(message.id) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
@@ -633,11 +738,7 @@ private fun MessageBlock(
         }
         if (message.role == MessageRole.AGENT) {
             // Local models (Qwen etc.) emit markdown and reasoning blocks too.
-            val clean = message.text
-                .replace(Regex("(?s)<think>.*?</think>"), "")
-                .replace(Regex("(?s)<think>.*$"), "")
-                .trim()
-            MarkdownText(clean.ifBlank { message.text.trim() }, Modifier.fillMaxWidth())
+            MarkdownText(visibleText, Modifier.fillMaxWidth(), fileBase = fileBase)
         } else {
             Text(
                 message.text,
@@ -670,6 +771,56 @@ private fun MessageBlock(
                     },
                 tint = Muted2
             )
+            if (message.role == MessageRole.AGENT && exporter != null) {
+                Spacer(Modifier.width(2.dp))
+                Box {
+                    Icon(
+                        Icons.Outlined.FileDownload,
+                        contentDescription = "Save reply",
+                        modifier = Modifier
+                            .size(11.dp)
+                            .clickable { saveOpen = true },
+                        tint = Muted2
+                    )
+                    ReplySaveMenu(
+                        expanded = saveOpen,
+                        onDismiss = { saveOpen = false },
+                        exporter = exporter,
+                        text = visibleText,
+                        base = fileBase
+                    )
+                }
+            }
+            if (toolCalls.isNotEmpty()) {
+                Spacer(Modifier.width(2.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(5.dp))
+                        .clickable { toolsOpen = !toolsOpen }
+                        .padding(horizontal = 2.dp, vertical = 1.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.Build,
+                        contentDescription = "Tool calls",
+                        modifier = Modifier.size(11.dp),
+                        tint = if (toolCalls.all { it.ok }) GreenInk else RedInk
+                    )
+                    if (toolCalls.size > 1) {
+                        Text(
+                            toolCalls.size.toString(),
+                            fontFamily = Mono,
+                            fontSize = 8.5.sp,
+                            color = Muted2
+                        )
+                    }
+                }
+            }
+        }
+        if (toolsOpen && toolCalls.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            MergedToolsPanel(toolCalls)
         }
     }
 }
@@ -704,43 +855,6 @@ private fun DeliveryMeta(state: AgentDeckState, task: Task, message: Message) {
 }
 
 @Composable
-private fun TypingBlock(modelName: String, cloud: Boolean) {
-    val transition = rememberInfiniteTransition(label = "typing")
-    val alpha by transition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
-        label = "typing-alpha"
-    )
-    Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(modelName, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Ink)
-            if (cloud) CloudChip() else LocalChip("On this phone")
-        }
-        Spacer(Modifier.height(4.dp))
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
-                .background(Surface3)
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            repeat(3) { index ->
-                Box(
-                    Modifier
-                        .size(5.dp)
-                        .clip(CircleShape)
-                        .background(Muted.copy(alpha = if (index == 1) alpha else alpha * 0.7f))
-                )
-                if (index < 2) Spacer(Modifier.width(4.dp))
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(if (cloud) "Waiting for the cloud model…" else "Generating locally…", fontSize = 10.sp, color = Muted)
-        }
-    }
-}
-
-@Composable
 private fun PlanCard(task: Task) {
     val plan = task.plan ?: return
     val done = plan.count { it.state == PlanState.DONE }
@@ -762,7 +876,7 @@ private fun PlanCard(task: Task) {
                     PlanState.DONE -> GreenInk
                     PlanState.ACTIVE -> BlueInk
                     PlanState.FAILED -> RedInk
-                    PlanState.TODO -> androidx.compose.ui.graphics.Color(0xFFC3C8CE)
+                    PlanState.TODO -> Muted2
                 }
                 Icon(icon, contentDescription = null, modifier = Modifier.size(13.dp), tint = tint)
                 Spacer(Modifier.width(7.dp))
@@ -777,95 +891,288 @@ private fun PlanCard(task: Task) {
     }
 }
 
+/** One assistant-ui-style tool row: action, argument chip, status. */
+private data class ToolBadge(
+    val id: String,
+    val name: String,
+    val action: String,
+    val arg: String,
+    val request: String,
+    val result: String,
+    val ok: Boolean
+)
+
+private fun toolAction(name: String): String = when (name) {
+    "web_search" -> "Searched the web"
+    "web_fetch" -> "Fetched page"
+    "http" -> "Called API"
+    "read" -> "Read file"
+    "list" -> "Listed files"
+    "grep" -> "Searched files"
+    "write" -> "Wrote file"
+    "run" -> "Ran command"
+    "git" -> "Ran git"
+    "memory_save" -> "Saved memory"
+    "memory_recall" -> "Recalled memory"
+    "device_status" -> "Read device status"
+    "list_apps" -> "Listed apps"
+    "open_app" -> "Opened app"
+    "open_settings" -> "Opened settings"
+    "open_url" -> "Opened URL"
+    "share_text" -> "Shared text"
+    "dial" -> "Opened dialer"
+    "sms_compose" -> "Composed message"
+    "set_alarm" -> "Set alarm"
+    "set_timer" -> "Set timer"
+    "calendar_event" -> "Added calendar event"
+    "set_volume" -> "Set volume"
+    else -> name.replace('_', ' ')
+}
+
+private fun toolBadge(message: Message): ToolBadge {
+    val line = message.text.lineSequence().firstOrNull().orEmpty()
+        .removePrefix("\u2699 ").trim()
+    val ok = line.contains("\u2192")
+    val call = line.substringBefore("\u2192").substringBefore("\u2717").trim()
+    val name = call.substringBefore(' ').ifBlank { "tool" }
+    val arg = call.substringAfter(' ', "").trim().trim('"')
+        .let { if (it.length > 44) it.take(43) + "\u2026" else it }
+    return ToolBadge(
+        id = message.id,
+        name = name,
+        action = toolAction(name),
+        arg = arg,
+        request = call.ifBlank { name },
+        result = line.substringAfter("\u2192", "").ifBlank {
+            line.substringAfter("\u2717", "")
+        }.trim(),
+        ok = ok
+    )
+}
+
+private fun shortDuration(ms: Long): String {
+    val seconds = (ms / 1000).coerceAtLeast(0)
+    return when {
+        seconds < 60 -> "${seconds}s"
+        seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
+        else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
+    }
+}
+
+/** Nine-cell loader shown while a reply is in flight. */
 @Composable
-private fun ActivityCard(state: AgentDeckState, task: Task) {
-    if (task.activity.isEmpty()) return
-    val open = task.id in state.activityOpen
-    val events = if (open) task.activity else task.activity.takeLast(2)
-    AdCard(padding = 0.dp) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { state.toggleActivity(task.id) }
-                .padding(horizontal = 13.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Outlined.Timeline, contentDescription = null, modifier = Modifier.size(14.dp), tint = Muted)
-            Spacer(Modifier.width(6.dp))
-            Text("Activity", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Ink)
-            Spacer(Modifier.width(6.dp))
-            val hasCloudHistory = task.messages.any { it.cloud || it.provider == ModelProvider.CLOUD } ||
-                task.activity.any { it.type == "cloud" || it.type == "cloud-error" }
-            val hasLocalHistory = task.messages.any { it.provider == ModelProvider.LOCAL } ||
-                task.activity.any { it.type == "local" || it.type == "local-engine" }
-            val hasLiveHostHistory = task.activity.any { it.type == "host" || it.type == "host-error" }
-            when {
-                hasLiveHostHistory -> AdTag("Live host", com.agentdeck.app.ui.theme.GreenSoft, com.agentdeck.app.ui.theme.GreenInk)
-                hasLocalHistory && hasCloudHistory -> AdTag("Mixed", GraySoft, GrayInk)
-                hasLocalHistory -> AdTag("On device", com.agentdeck.app.ui.theme.BlueSoft, com.agentdeck.app.ui.theme.BlueInk)
-                hasCloudHistory -> CloudChip("Cloud")
-                else -> AdTag("History", GraySoft, GrayInk)
-            }
-            Spacer(Modifier.weight(1f))
-            Text("${task.activity.size} events", fontSize = 9.sp, color = Muted2)
-            Spacer(Modifier.width(3.dp))
-            Icon(
-                if (open) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                contentDescription = null,
-                modifier = Modifier.size(13.dp),
-                tint = Muted2
-            )
+private fun ActivityStickers(
+    state: AgentDeckState,
+    task: Task
+) {
+    val running = state.isAgentRunning(task.id) ||
+        state.isHostRunning(task.id) ||
+        state.isCloudStreaming(task.id)
+    val waiting = task.permissionRequest != null
+    if (!running && !waiting) return
+
+    var tick by remember(task.id) { mutableStateOf(0L) }
+    LaunchedEffect(task.id, running, waiting) {
+        tick = 0L
+        while (running || waiting) {
+            delay(120)
+            tick += 1
         }
-        Column(Modifier.padding(start = 13.dp, end = 13.dp, bottom = 11.dp)) {
-            events.forEach { event ->
-                Row(verticalAlignment = Alignment.Top) {
-                    Icon(
-                        activityIcon(event.type),
-                        contentDescription = null,
-                        modifier = Modifier.size(12.dp).padding(top = 2.dp),
-                        tint = Muted2
+    }
+    val lastUser = task.messages.lastOrNull { it.role == MessageRole.USER }
+    val startedAt = lastUser?.at ?: task.createdAt
+    val elapsed = shortDuration(System.currentTimeMillis() - startedAt)
+    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+        GenerationLoader(tick = tick, waiting = waiting, elapsed = elapsed)
+    }
+}
+
+/** assistant-ui loader: nine cells with a moving band and a shimmering label. */
+@Composable
+private fun GenerationLoader(tick: Long, waiting: Boolean, elapsed: String) {
+    val label = if (waiting) "Waiting for approval" else "Generating"
+    Column(Modifier.padding(vertical = 2.dp)) {
+        GenerationCells(tick)
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ShimmerLabel(label)
+            Spacer(Modifier.width(6.dp))
+            Text("· $elapsed", fontFamily = Mono, fontSize = 9.5.sp, color = Muted2)
+        }
+    }
+}
+
+@Composable
+private fun GenerationCells(tick: Long) {
+    val phase = (tick % 8).toInt()
+    val active = if (phase < 5) phase else 8 - phase
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        for (row in 0 until 3) {
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                for (col in 0 until 3) {
+                    val distance = kotlin.math.abs(row + col - active)
+                    val alpha = when (distance) {
+                        0 -> 1f
+                        1 -> 0.62f
+                        2 -> 0.38f
+                        else -> 0.2f
+                    }
+                    Box(
+                        Modifier
+                            .size(6.dp)
+                            .clip(RoundedCornerShape(1.5.dp))
+                            .background(InkSoft.copy(alpha = alpha))
                     )
-                    Spacer(Modifier.width(7.dp))
-                    Text(event.text, fontSize = 10.5.sp, lineHeight = 14.sp, color = InkSoft, modifier = Modifier.weight(1f))
-                    Spacer(Modifier.width(7.dp))
-                    Text(relativeTime(event.at), fontSize = 8.5.sp, color = Muted2)
                 }
-                Spacer(Modifier.height(8.dp))
             }
         }
     }
 }
 
-private fun activityIcon(type: String): ImageVector = when (type) {
+@Composable
+private fun ShimmerLabel(text: String) {
+    val transition = rememberInfiniteTransition(label = "loader")
+    val offset by transition.animateFloat(
+        initialValue = -1f,
+        targetValue = 2f,
+        animationSpec = infiniteRepeatable(tween(1600, easing = LinearEasing)),
+        label = "loader-shimmer"
+    )
+    val brush = Brush.linearGradient(
+        colors = listOf(Muted2.copy(alpha = 0.5f), Ink, Muted2.copy(alpha = 0.5f)),
+        start = Offset(offset * 180f, 0f),
+        end = Offset(offset * 180f + 120f, 0f)
+    )
+    Text(
+        text,
+        style = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.Medium, brush = brush)
+    )
+}
+
+/**
+ * Tool calls from the same turn, attached to the last visible reply so the
+ * hidden tool-request message never swallows the affordance.
+ */
+private fun toolsForTurn(task: Task, message: Message): List<ToolBadge> {
+    val agentIndex = task.messages.indexOfFirst { it.id == message.id }
+    if (agentIndex < 0) return emptyList()
+    var userIndex = -1
+    for (index in agentIndex downTo 0) {
+        if (task.messages[index].role == MessageRole.USER) {
+            userIndex = index
+            break
+        }
+    }
+    var end = task.messages.size
+    for (index in agentIndex + 1 until task.messages.size) {
+        if (task.messages[index].role == MessageRole.USER) {
+            end = index
+            break
+        }
+    }
+    val lastVisible = (agentIndex + 1 until end).none { index ->
+        val next = task.messages[index]
+        next.role == MessageRole.AGENT &&
+            next.text.isNotBlank() &&
+            agentVisibleText(next.text).isNotBlank()
+    }
+    if (!lastVisible) return emptyList()
+    return task.messages
+        .subList(if (userIndex >= 0) userIndex else 0, end)
+        .filter { it.role == MessageRole.SYSTEM && it.text.startsWith("⚙") }
+        .map(::toolBadge)
+}
+
+private fun toolIcon(name: String): ImageVector = when (name) {
+    "web_search", "web_fetch", "http", "open_url" -> Icons.Outlined.Cloud
     "read" -> Icons.Outlined.Description
-    "edit" -> Icons.Outlined.Edit
-    "test" -> Icons.Outlined.Terminal
-    "review" -> Icons.Outlined.CheckCircle
-    "queue" -> Icons.Outlined.Schedule
-    "error" -> Icons.Outlined.ErrorOutline
-    "permission" -> Icons.Outlined.Shield
-    "connect" -> Icons.Outlined.Dns
-    "local" -> Icons.Outlined.PhoneAndroid
-    "cloud" -> Icons.Outlined.Cloud
-    "cloud-error" -> Icons.Outlined.Warning
-    "github" -> Icons.Outlined.Code
-    "github-error" -> Icons.Outlined.Warning
-    "model" -> Icons.Outlined.Sync
-    else -> Icons.Outlined.Timeline
+    "write" -> Icons.Outlined.Edit
+    "grep" -> Icons.Outlined.Search
+    "run" -> Icons.Outlined.Terminal
+    "git" -> Icons.Outlined.CallSplit
+    "memory_save", "memory_recall" -> Icons.Outlined.Memory
+    "device_status", "list_apps", "open_app", "open_settings", "set_volume",
+    "dial", "sms_compose", "share_text" -> Icons.Outlined.PhoneAndroid
+    else -> Icons.Outlined.Build
+}
+
+@Composable
+private fun MergedToolsPanel(badges: List<ToolBadge>) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = Surface2,
+        border = BorderStroke(1.dp, Line)
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+            badges.forEachIndexed { index, badge ->
+                if (index > 0) {
+                    Spacer(Modifier.height(7.dp))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+                    Spacer(Modifier.height(7.dp))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        toolIcon(badge.name),
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = if (badge.ok) GreenInk else RedInk
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        badge.action,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Ink,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (badge.arg.isNotBlank()) {
+                        Text(
+                            badge.arg,
+                            fontFamily = Mono,
+                            fontSize = 8.5.sp,
+                            color = Muted2,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 200.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text("Request", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = Muted2)
+                Text(
+                    badge.request,
+                    fontFamily = Mono,
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp,
+                    color = InkSoft
+                )
+                Spacer(Modifier.height(3.dp))
+                Text("Result", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = Muted2)
+                Text(
+                    badge.result.ifBlank { "Finished with no output." },
+                    fontSize = 10.5.sp,
+                    lineHeight = 15.sp,
+                    color = Ink
+                )
+            }
+        }
+    }
 }
 
 @Composable
 private fun PermissionCard(state: AgentDeckState, task: Task, request: PermissionRequest) {
     AdCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(13.dp), tint = BlueInk)
+            Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(12.dp), tint = BlueInk)
             Spacer(Modifier.width(5.dp))
             Text(
                 "PERMISSION NEEDED",
+                fontFamily = Mono,
                 fontSize = 9.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 0.6.sp,
-                color = BlueInk
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 1.sp,
+                color = Muted2
             )
         }
         Spacer(Modifier.height(6.dp))
@@ -923,8 +1230,8 @@ private fun FailureCard(state: AgentDeckState, task: Task, failure: Failure) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(9.dp),
-            color = androidx.compose.ui.graphics.Color(0xFFFFF7F6),
-            border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFF2D4D0))
+            color = Surface2,
+            border = BorderStroke(1.dp, Line)
         ) {
             Text(
                 failure.detail,
@@ -932,7 +1239,7 @@ private fun FailureCard(state: AgentDeckState, task: Task, failure: Failure) {
                 fontFamily = Mono,
                 fontSize = 10.sp,
                 lineHeight = 15.sp,
-                color = androidx.compose.ui.graphics.Color(0xFF7A2A22)
+                color = InkSoft
             )
         }
         Spacer(Modifier.height(11.dp))
@@ -972,7 +1279,8 @@ private fun ReadyCard(state: AgentDeckState, task: Task) {
                 modifier = Modifier
                     .size(31.dp)
                     .clip(CircleShape)
-                    .background(GreenSoft),
+                    .background(Surface2)
+                    .border(1.dp, Line, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = GreenInk)
@@ -1015,7 +1323,8 @@ private fun DecisionCard(task: Task) {
                 modifier = Modifier
                     .size(31.dp)
                     .clip(CircleShape)
-                    .background(GreenSoft),
+                    .background(Surface2)
+                    .border(1.dp, Line, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = GreenInk)
@@ -1090,9 +1399,10 @@ private fun ComposerNotice(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 8.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(AmberSoft)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .background(AdSurface)
+            .border(1.dp, Line, RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -1101,13 +1411,13 @@ private fun ComposerNotice(
             modifier = Modifier.size(12.dp),
             tint = AmberInk
         )
-        Spacer(Modifier.width(5.dp))
+        Spacer(Modifier.width(6.dp))
         Text(
             text,
             modifier = Modifier.weight(1f),
             fontSize = 9.5.sp,
             lineHeight = 13.sp,
-            color = AmberInk
+            color = InkSoft
         )
         if (actionLabel != null) {
             Text(
@@ -1117,8 +1427,8 @@ private fun ComposerNotice(
                     .clickable(onClick = onAction)
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 fontSize = 9.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = BlueInk
+                fontWeight = FontWeight.Medium,
+                color = Ink
             )
         }
         if (secondLabel != null) {
@@ -1130,15 +1440,22 @@ private fun ComposerNotice(
                     .clickable(onClick = onSecond)
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 fontSize = 9.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = BlueInk
+                fontWeight = FontWeight.Medium,
+                color = Ink
             )
         }
     }
 }
 
 @Composable
-private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, local: Boolean, cloud: Boolean) {
+private fun ComposerBar(
+    state: AgentDeckState,
+    task: Task,
+    model: ModelOption?,
+    local: Boolean,
+    cloud: Boolean,
+    modifier: Modifier = Modifier
+) {
     val modelState = model?.localState
     if (task.status == TaskStatus.COMPLETED) {
         Surface(Modifier.fillMaxWidth(), color = AdSurface, border = BorderStroke(1.dp, Line)) {
@@ -1162,36 +1479,97 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
     val hostBlocked = !local && !cloud && !state.canReachHost()
 
     var text by remember(task.id) { mutableStateOf("") }
+    var attachGuardUntil by remember(task.id) { mutableStateOf(0L) }
+    var attachPickerOpen by remember(task.id) { mutableStateOf(false) }
+    val draft = state.draftAttachmentsFor(task.id)
     val streamingCloud = state.isCloudStreaming(task.id)
     val streamingHost = state.isHostRunning(task.id)
     val streamingLocal = state.isLocalStreaming(task.id)
     val streaming = streamingCloud || streamingHost || streamingLocal
     val retryCloud = state.canRetryCloudReply(task.id)
     val busy = state.isTaskBusy(task.id)
-    val canSend = text.isNotBlank() && !busy && !localBlocked && !cloudBlocked && !hostBlocked
+    val canSend = (text.isNotBlank() || draft.isNotEmpty()) &&
+        !busy && !localBlocked && !cloudBlocked && !hostBlocked
     val switchable = local || cloud
+    val landscapeComposer = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val stopActiveRun: () -> Unit = {
+        when {
+            streamingCloud -> state.stopCloudReply(task.id)
+            streamingHost -> state.stopHostRun(task.id)
+            streamingLocal -> state.stopLocalReply(task.id)
+        }
+    }
     fun send() {
         if (!canSend) return
-        state.sendMessage(task.id, text)
+        // A picker tap can land on the send button as the picker closes; never
+        // let that send the file before the user has seen the draft chip.
+        if (attachPickerOpen || SystemClock.uptimeMillis() < attachGuardUntil) return
+        state.sendMessage(task.id, text, draft)
         text = ""
     }
 
-    Surface(Modifier.fillMaxWidth(), color = AdSurface, border = BorderStroke(1.dp, Line)) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(horizontal = 14.dp, vertical = 9.dp)
-        ) {
-            if (retryCloud) {
+    val context = LocalContext.current
+    val attachLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        attachPickerOpen = false
+        if (uris.isNotEmpty()) {
+            attachGuardUntil = SystemClock.uptimeMillis() + 600
+            state.addDraftAttachments(task.id, uris)
+        }
+    }
+    fun startAttach() {
+        attachPickerOpen = true
+        runCatching { attachLauncher.launch(arrayOf("*/*")) }
+            .onFailure {
+                attachPickerOpen = false
+                state.notifyUser("No file picker on this device")
+            }
+    }
+    val voiceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+            if (!spoken.isNullOrBlank()) {
+                text = if (text.isBlank()) spoken else "${text.trimEnd()} $spoken"
+            }
+        }
+    }
+    fun startVoice() {
+        if (busy) return
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your message")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+        }
+        if (intent.resolveActivity(context.packageManager) == null) {
+            state.notifyUser("No speech recognizer installed")
+            return
+        }
+        runCatching { voiceLauncher.launch(intent) }
+            .onFailure { state.notifyUser("Could not start voice input") }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        if (retryCloud) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 8.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(RedSoft)
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(AdSurface)
+                        .border(1.dp, Line, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -1200,7 +1578,7 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                         modifier = Modifier.size(12.dp),
                         tint = RedInk
                     )
-                    Spacer(Modifier.width(5.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         "Cloud request failed. The conversation is saved.",
                         modifier = Modifier.weight(1f),
@@ -1215,41 +1593,8 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
                             .clickable { state.retryCloudReply(task.id) }
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BlueInk
-                    )
-                }
-            }
-            if (state.isAgentRunning(task.id)) {
-                val lastToolNote = task.messages.lastOrNull { it.text.startsWith("⚙") }?.text.orEmpty()
-                    .removePrefix("⚙ ").lineSequence().firstOrNull().orEmpty().take(60)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(BlueSoft)
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(11.dp),
-                        strokeWidth = 1.8.dp,
-                        color = BlueInk
-                    )
-                    Spacer(Modifier.width(7.dp))
-                    Text(
-                        if (task.permissionRequest != null) {
-                            "Waiting for your approval"
-                        } else if (lastToolNote.isNotBlank()) {
-                            "Working · $lastToolNote"
-                        } else {
-                            "Thinking…"
-                        },
-                        modifier = Modifier.weight(1f),
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = BlueInk
+                        fontWeight = FontWeight.Medium,
+                        color = Ink
                     )
                 }
             }
@@ -1284,138 +1629,299 @@ private fun ComposerBar(state: AgentDeckState, task: Task, model: ModelOption?, 
             }
             Column(
                 modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .widthIn(max = 760.dp)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
+                    .shadow(10.dp, RoundedCornerShape(24.dp), clip = false)
+                    .clip(RoundedCornerShape(24.dp))
                     .background(Surface2)
-                    .border(1.dp, Line, RoundedCornerShape(20.dp))
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .border(1.dp, LineStrong, RoundedCornerShape(24.dp))
+                    .padding(horizontal = 12.dp, vertical = if (landscapeComposer) 7.dp else 10.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 36.dp, max = 120.dp)
-                ) {
-                    if (text.isEmpty()) {
-                        Text(
-                            when {
-                                task.agentMode -> "Instruct the agent…"
-                                cloud -> "Ask about the code…"
-                                local -> "Message locally…"
-                                task.status == TaskStatus.NEEDS_INPUT -> "Answer the agent…"
-                                else -> "Message the agent…"
-                            },
-                            fontSize = 12.5.sp,
-                            color = Muted2
-                        )
-                    }
-                    BasicTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        textStyle = TextStyle(fontSize = 12.5.sp, lineHeight = 18.sp, color = Ink),
-                        cursorBrush = SolidColor(BlueInk)
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (draft.isNotEmpty()) {
                     Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .clickable(enabled = switchable && !busy) { state.openTaskModels(task.id) }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(
-                            state.taskModelName(task),
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = InkSoft,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 200.dp)
+                        draft.forEach { file ->
+                            AttachmentChip(
+                                file = file,
+                                onRemove = { state.removeDraftAttachment(task.id, file.path) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (landscapeComposer) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        ComposerCircleButton(Icons.Outlined.Add, "Attach files", !busy, ::startAttach)
+                        ComposerCircleButton(Icons.Outlined.Mic, "Voice input", !busy, ::startVoice)
+                        ComposerInput(
+                            text = text,
+                            onValueChange = { text = it },
+                            placeholder = "Ask anything",
+                            modifier = Modifier.weight(1f).heightIn(min = 34.dp, max = 56.dp)
                         )
-                        if (switchable) {
-                            Spacer(Modifier.width(3.dp))
-                            Icon(
-                                Icons.Outlined.KeyboardArrowDown,
-                                contentDescription = "Change model",
-                                modifier = Modifier.size(11.dp),
-                                tint = if (busy) Muted2 else BlueInk
-                            )
-                        }
+                        ComposerModelPill(
+                            state = state,
+                            task = task,
+                            switchable = switchable,
+                            busy = busy,
+                            modifier = Modifier.widthIn(max = 210.dp)
+                        )
+                        ComposerSendButton(
+                            streaming = streaming,
+                            busy = busy,
+                            canSend = canSend,
+                            onStop = stopActiveRun,
+                            onSend = ::send,
+                            stopDescription = if (streamingHost) "Stop host run" else "Stop generation"
+                        )
                     }
-                    Spacer(Modifier.weight(1f))
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when {
-                                    streaming -> RedSoft
-                                    canSend -> Ink
-                                    else -> androidx.compose.ui.graphics.Color(0xFFE2E5E9)
-                                }
-                            )
-                            .clickable(enabled = streaming || canSend) {
-                                when {
-                                    streamingCloud -> state.stopCloudReply(task.id)
-                                    streamingHost -> state.stopHostRun(task.id)
-                                    streamingLocal -> state.stopLocalReply(task.id)
-                                    else -> send()
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        when {
-                            streaming -> Icon(
-                                Icons.Outlined.Stop,
-                                contentDescription = if (streamingHost) "Stop host run" else "Stop generation",
-                                modifier = Modifier.size(16.dp),
-                                tint = RedInk
-                            )
-                            busy -> CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = Muted
-                            )
-                            else -> Icon(
-                                Icons.Outlined.Send,
-                                contentDescription = "Send message",
-                                modifier = Modifier.size(15.dp),
-                                tint = if (canSend) AdSurface else androidx.compose.ui.graphics.Color(0xFFA6ACB3)
-                            )
-                        }
+                } else {
+                    ComposerInput(
+                        text = text,
+                        onValueChange = { text = it },
+                        placeholder = "Ask anything",
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp, max = 132.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        ComposerCircleButton(Icons.Outlined.Add, "Attach files", !busy, ::startAttach)
+                        Spacer(Modifier.width(6.dp))
+                        ComposerCircleButton(Icons.Outlined.Mic, "Voice input", !busy, ::startVoice)
+                        Spacer(Modifier.width(8.dp))
+                        ComposerModelPill(
+                            state = state,
+                            task = task,
+                            switchable = switchable,
+                            busy = busy,
+                            modifier = Modifier.widthIn(max = 320.dp)
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
+                        ComposerSendButton(
+                            streaming = streaming,
+                            busy = busy,
+                            canSend = canSend,
+                            onStop = stopActiveRun,
+                            onSend = ::send,
+                            stopDescription = if (streamingHost) "Stop host run" else "Stop generation"
+                        )
                     }
                 }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                if (local) {
-                    Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(10.dp), tint = BlueInk)
-                    Text("On this phone", fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold, color = BlueInk)
-                    Text("·", fontSize = 8.5.sp, color = Muted2)
-                }
-                if (cloud) {
-                    Icon(Icons.Outlined.Cloud, contentDescription = null, modifier = Modifier.size(10.dp), tint = com.agentdeck.app.ui.theme.VioletInk)
-                    Text("Cloud API", fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold, color = com.agentdeck.app.ui.theme.VioletInk)
-                    Text("·", fontSize = 8.5.sp, color = Muted2)
-                }
-                Text(if (cloud) "Read-only analysis" else "Standard permissions", fontSize = 8.5.sp, color = Muted2)
             }
             val hint = when {
                 streamingHost -> "Host run in progress. Stop to cancel the agent on the host; reported changes stay."
-                streamingLocal -> "Generating on this phone. Stop to keep the partial reply; nothing is changed or run."
-                streamingCloud -> "Cloud reply streaming. Stop to keep the partial reply; nothing is changed or run."
-                cloud -> "Agent session · tools run with your approval."
-                local -> "Runs on this phone. Nothing is changed or run here."
+                streamingLocal -> "Running on this phone. Stop to cancel at the next step; text already produced is kept."
+                streamingCloud -> "Cloud reply in progress. Stop to cancel; text already produced is kept."
                 task.status == TaskStatus.FAILED -> "This task is stopped. Messages are saved; retry the task to resume."
-                task.status == TaskStatus.NEEDS_INPUT && task.permissionRequest != null -> "Resolve the permission request above, or reply below."
-                else -> "Message the agent on ${state.data.host.name}."
+                task.permissionRequest != null -> "Resolve the permission request above, or reply below."
+                else -> ""
             }
             if (hint.isNotBlank()) {
-                Text(hint, fontSize = 9.sp, lineHeight = 12.sp, color = Muted2, modifier = Modifier.padding(top = 4.dp))
+                Text(
+                    hint,
+                    fontSize = 9.sp,
+                    lineHeight = 12.sp,
+                    color = Muted2,
+                    modifier = Modifier.padding(top = 5.dp, start = 2.dp)
+                )
+            }
+        }
+}
+
+@Composable
+private fun ComposerInput(
+    text: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.CenterStart) {
+        if (text.isEmpty()) {
+            Text(placeholder, fontSize = 13.sp, lineHeight = 19.sp, color = Muted2)
+        }
+        BasicTextField(
+            value = text,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = TextStyle(fontSize = 13.sp, lineHeight = 19.sp, color = Ink),
+            cursorBrush = SolidColor(BlueInk)
+        )
+    }
+}
+
+@Composable
+private fun ComposerModelPill(
+    state: AgentDeckState,
+    task: Task,
+    switchable: Boolean,
+    busy: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(PillShape)
+            .background(AdSurface)
+            .border(1.dp, Line, PillShape)
+            .clickable(enabled = switchable && !busy) { state.openTaskModels(task.id) }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            state.taskModelName(task),
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.Medium,
+            color = InkSoft,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (switchable) {
+            Spacer(Modifier.width(3.dp))
+            Icon(
+                Icons.Outlined.KeyboardArrowDown,
+                contentDescription = "Change model",
+                modifier = Modifier.size(12.dp),
+                tint = if (busy) Muted2 else BlueInk
+            )
+        }
+    }
+}
+
+@Composable
+private fun ComposerSendButton(
+    streaming: Boolean,
+    busy: Boolean,
+    canSend: Boolean,
+    onStop: () -> Unit,
+    onSend: () -> Unit,
+    stopDescription: String
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(
+                when {
+                    streaming -> RedSoft
+                    canSend -> Ink
+                    else -> Surface3
+                }
+            )
+            .clickable(enabled = streaming || canSend) {
+                if (streaming) onStop() else onSend()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            streaming -> Icon(
+                Icons.Outlined.Stop,
+                contentDescription = stopDescription,
+                modifier = Modifier.size(16.dp),
+                tint = RedInk
+            )
+            busy -> CircularProgressIndicator(
+                modifier = Modifier.size(15.dp),
+                strokeWidth = 2.dp,
+                color = Muted
+            )
+            else -> Icon(
+                Icons.Outlined.ArrowUpward,
+                contentDescription = "Send message",
+                modifier = Modifier.size(16.dp),
+                tint = if (canSend) AdSurface else Muted2
+            )
+        }
+    }
+}
+
+@Composable
+private fun ComposerCircleButton(
+    icon: ImageVector,
+    description: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(AdSurface)
+            .border(1.dp, Line, CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = description,
+            modifier = Modifier.size(16.dp),
+            tint = if (enabled) InkSoft else Muted2.copy(alpha = 0.5f)
+        )
+    }
+}
+
+@Composable
+private fun AttachmentChip(file: Attachment, onRemove: (() -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(Surface2)
+            .border(1.dp, Line, RoundedCornerShape(9.dp))
+            .padding(start = 8.dp, end = if (onRemove == null) 8.dp else 3.dp, top = 5.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Outlined.AttachFile,
+            contentDescription = null,
+            modifier = Modifier.size(12.dp),
+            tint = BlueInk
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            file.name,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.Medium,
+            color = InkSoft,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 168.dp)
+        )
+        if (file.size > 0) {
+            Spacer(Modifier.width(5.dp))
+            Text(attachmentSize(file.size), fontSize = 8.5.sp, color = Muted2)
+        }
+        if (onRemove != null) {
+            Spacer(Modifier.width(3.dp))
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onRemove),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "Remove ${file.name}",
+                    modifier = Modifier.size(11.dp),
+                    tint = Muted
+                )
             }
         }
     }
+}
+
+private fun attachmentSize(size: Long): String = when {
+    size < 1_024 -> "$size B"
+    size < 1_048_576 -> "${size / 1_024} KB"
+    else -> "${size / 1_048_576} MB"
 }
 
 @Composable
@@ -1605,8 +2111,8 @@ private fun OverviewCard(state: AgentDeckState, task: Task, project: Project) {
             Text(
                 "View checks",
                 fontSize = 10.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = BlueInk,
+                fontWeight = FontWeight.Medium,
+                color = Ink,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .clickable { state.openChecks(task.id) }
@@ -1820,8 +2326,8 @@ private fun DiffContent(
                     DiffHunk(file, viewport)
                     file.diffLines.forEach { line ->
                         val bg = when (line.type) {
-                            DiffLineType.ADD -> androidx.compose.ui.graphics.Color(0xFFF3FBF6)
-                            DiffLineType.DELETE -> androidx.compose.ui.graphics.Color(0xFFFFF4F2)
+                            DiffLineType.ADD -> GreenSoft
+                            DiffLineType.DELETE -> RedSoft
                             DiffLineType.CONTEXT -> AdSurface
                         }
                         val sign = when (line.type) {
@@ -1863,8 +2369,8 @@ private fun DiffContent(
                                 softWrap = false,
                                 maxLines = 1,
                                 color = when (line.type) {
-                                    DiffLineType.ADD -> androidx.compose.ui.graphics.Color(0xFF194A2F)
-                                    DiffLineType.DELETE -> androidx.compose.ui.graphics.Color(0xFF7C2B23)
+                                    DiffLineType.ADD -> GreenInk
+                                    DiffLineType.DELETE -> RedInk
                                     DiffLineType.CONTEXT -> InkSoft
                                 }
                             )
@@ -1893,7 +2399,7 @@ private fun DiffHunk(file: ChangedFile, minWidth: Dp) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(androidx.compose.ui.graphics.Color(0xFFF5F7F8))
+            .background(Surface2)
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text("@@ −$firstOld,$oldCount +$firstNew,$newCount @@", fontFamily = Mono, fontSize = 9.sp, color = Muted)
@@ -2017,7 +2523,7 @@ private fun CheckCard(state: AgentDeckState, task: Task, check: CheckRun) {
     var expanded by remember(check.id) { mutableStateOf(check.status == CheckStatus.FAILED) }
     val tone = checkTone(check.status)
     val borderColor = if (check.status == CheckStatus.FAILED) {
-        androidx.compose.ui.graphics.Color(0xFFF1D0CC)
+        RedInk.copy(alpha = 0.35f)
     } else {
         Line
     }
@@ -2066,8 +2572,8 @@ private fun CheckCard(state: AgentDeckState, task: Task, check: CheckRun) {
                         if (check.status == CheckStatus.FAILED) (if (expanded) "Hide error output" else "View error output")
                         else (if (expanded) "Hide output" else "View output"),
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = BlueInk
+                        fontWeight = FontWeight.Medium,
+                        color = InkSoft
                     )
                     Spacer(Modifier.width(3.dp))
                     Icon(
@@ -2100,8 +2606,8 @@ private fun CheckCard(state: AgentDeckState, task: Task, check: CheckRun) {
                 Text(
                     "Discuss in chat",
                     fontSize = 10.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = BlueInk,
+                    fontWeight = FontWeight.Medium,
+                    color = Ink,
                     modifier = Modifier
                         .padding(top = 7.dp)
                         .clip(RoundedCornerShape(6.dp))

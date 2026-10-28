@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -279,20 +280,20 @@ fun AdIconButton(
     modifier: Modifier = Modifier,
     filled: Boolean = false,
     enabled: Boolean = true,
-    size: Dp = 38.dp
+    size: Dp = 36.dp
 ) {
     val bg = if (filled) Ink else AdSurface
     val fg = if (filled) AdSurface else InkSoft
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(11.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(bg)
-            .border(1.dp, if (filled) Ink else Line, RoundedCornerShape(11.dp))
+            .border(1.dp, if (filled) Ink else Line, RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, contentDescription = description, tint = fg, modifier = Modifier.size(18.dp))
+        Icon(icon, contentDescription = description, tint = if (enabled) fg else Muted2, modifier = Modifier.size(17.dp))
     }
 }
 
@@ -309,17 +310,17 @@ fun AdButton(
     small: Boolean = false,
     fillWidth: Boolean = false
 ) {
-    val height = if (small) 38.dp else 44.dp
-    val shape = RoundedCornerShape(if (small) 10.dp else 12.dp)
-    val contentPadding = PaddingValues(horizontal = if (small) 12.dp else 16.dp)
+    val height = if (small) 34.dp else 40.dp
+    val shape = RoundedCornerShape(if (small) 9.dp else 11.dp)
+    val contentPadding = PaddingValues(horizontal = if (small) 11.dp else 14.dp)
     val buttonModifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).height(height)
 
     val content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
         if (icon != null) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(if (small) 14.dp else 16.dp))
-            Spacer(Modifier.width(6.dp))
+            Icon(icon, contentDescription = null, modifier = Modifier.size(if (small) 13.dp else 15.dp))
+            Spacer(Modifier.width(5.dp))
         }
-        Text(text, fontSize = if (small) 11.5.sp else 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(text, fontSize = if (small) 11.sp else 12.5.sp, fontWeight = FontWeight.SemiBold)
     }
 
     when (kind) {
@@ -337,7 +338,7 @@ fun AdButton(
             enabled = enabled,
             shape = shape,
             contentPadding = contentPadding,
-            colors = ButtonDefaults.buttonColors(containerColor = RedInk, contentColor = AdSurface)
+            colors = ButtonDefaults.buttonColors(containerColor = RedSoft, contentColor = RedInk)
         ) { content() }
         AdButtonKind.OUTLINE -> OutlinedButton(
             onClick = onClick,
@@ -346,11 +347,16 @@ fun AdButton(
             shape = shape,
             contentPadding = contentPadding,
             border = BorderStroke(1.dp, LineStrong),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink)
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = InkSoft)
         ) { content() }
     }
 }
 
+/**
+ * Quiet hairline chip in the assistant-ui language: neutral surface, hairline
+ * border, a small icon and label tinted by the tone. The fill stays neutral so
+ * badges never compete with the conversation.
+ */
 @Composable
 fun AdTag(
     text: String,
@@ -362,15 +368,16 @@ fun AdTag(
     Row(
         modifier = modifier
             .clip(PillShape)
-            .background(bg)
-            .padding(horizontal = 5.dp, vertical = 1.dp),
+            .background(Surface2)
+            .border(1.dp, Line, PillShape)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(9.dp), tint = fg)
             Spacer(Modifier.width(3.dp))
         }
-        Text(text, fontSize = 8.sp, fontWeight = FontWeight.Bold, color = fg, lineHeight = 11.sp)
+        Text(text, fontSize = 8.sp, fontWeight = FontWeight.SemiBold, color = fg, lineHeight = 11.sp)
     }
 }
 
@@ -435,13 +442,14 @@ fun StatusPill(status: TaskStatus) {
     Row(
         modifier = Modifier
             .clip(PillShape)
-            .background(tone.bg)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .background(Surface2)
+            .border(1.dp, Line, PillShape)
+            .padding(horizontal = 7.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(statusIcon(status), contentDescription = null, modifier = Modifier.size(11.dp), tint = tone.fg)
+        Icon(statusIcon(status), contentDescription = null, modifier = Modifier.size(10.dp), tint = tone.fg)
         Spacer(Modifier.width(4.dp))
-        Text(status.label, fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, color = tone.fg)
+        Text(status.label, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = InkSoft)
     }
 }
 
@@ -451,11 +459,12 @@ fun CheckPill(status: CheckStatus) {
     Text(
         status.label,
         fontSize = 8.5.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Medium,
         color = tone.fg,
         modifier = Modifier
             .clip(PillShape)
-            .background(tone.bg)
+            .background(Surface2)
+            .border(1.dp, Line, PillShape)
             .padding(horizontal = 7.dp, vertical = 2.dp)
     )
 }
@@ -493,8 +502,7 @@ fun RootTopBar(
 
 @Composable
 fun HomeTopBar(
-    onAbout: () -> Unit,
-    onSettings: () -> Unit
+    onAbout: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -520,16 +528,6 @@ fun HomeTopBar(
             ) {
                 Icon(Icons.Outlined.Info, contentDescription = "About this workspace", modifier = Modifier.size(12.dp), tint = Muted)
                 Spacer(Modifier.width(4.dp))
-            }
-            Box(
-                modifier = Modifier
-                    .size(33.dp)
-                    .clip(CircleShape)
-                    .background(Ink)
-                    .clickable(onClick = onSettings),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("R", color = AdSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -720,7 +718,11 @@ fun SectionHeader(
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text.uppercase(),
-        style = AdType.Section,
+        fontFamily = Mono,
+        fontSize = 9.5.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 1.sp,
+        color = Muted2,
         modifier = modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 7.dp)
     )
 }
@@ -809,19 +811,17 @@ fun AdTaskCard(
                             tint = Muted2
                         )
                     }
-                    Spacer(Modifier.width(6.dp))
                 }
-                StatusPill(task.status)
             }
             Spacer(Modifier.height(5.dp))
             FlowRowMeta {
                 Text(projectName, style = AdType.Meta, maxLines = 1)
                 Text("·", style = AdType.Meta, color = Muted2)
-                Text(modelName, style = AdType.Meta, maxLines = 1)
+                Text(modelName, fontFamily = Mono, fontSize = 9.5.sp, color = Muted, maxLines = 1)
                 if (isLocal) LocalChip()
                 if (isCloud) CloudChip()
                 Text("·", style = AdType.Meta, color = Muted2)
-                Text(relativeTime(task.updatedAt), style = AdType.Meta)
+                Text(relativeTime(task.updatedAt), style = AdType.Tiny)
             }
             if (task.changedFiles.isNotEmpty() || task.checks.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
@@ -885,13 +885,14 @@ fun AdStatTile(
                     modifier = Modifier
                         .size(25.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(tone.bg),
+                        .background(Surface2)
+                        .border(1.dp, Line, RoundedCornerShape(8.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(icon, contentDescription = null, modifier = Modifier.size(13.dp), tint = tone.fg)
                 }
                 Spacer(Modifier.weight(1f))
-                Text(count.toString(), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Text(count.toString(), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Ink)
             }
             Spacer(Modifier.height(5.dp))
             Text(label, fontSize = 9.5.sp, lineHeight = 11.sp, fontWeight = FontWeight.Medium, color = Muted)
@@ -921,29 +922,72 @@ fun AdBottomBar(active: RootTab, onSelect: (RootTab) -> Unit) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .selectable(selected = selected, onClick = { onSelect(tab) }, role = Role.Tab)
-                        .padding(vertical = 3.dp),
+                        .padding(vertical = 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .width(44.dp)
-                            .height(27.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(if (selected) BlueSoft else Color.Transparent),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(icon, contentDescription = label, modifier = Modifier.size(19.dp), tint = if (selected) BlueInk else Muted2)
-                    }
-                    Spacer(Modifier.height(2.dp))
+                    Icon(
+                        icon,
+                        contentDescription = label,
+                        modifier = Modifier.size(19.dp),
+                        tint = if (selected) Ink else Muted2
+                    )
+                    Spacer(Modifier.height(3.dp))
                     Text(
                         label,
                         fontSize = 9.5.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (selected) BlueInk else Muted2
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (selected) Ink else Muted2
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdNavRail(active: RootTab, onSelect: (RootTab) -> Unit) {
+    val tabs = listOf(
+        Triple(RootTab.HOME, "Home", Icons.Outlined.Home),
+        Triple(RootTab.TASKS, "Chats", Icons.Outlined.ChatBubbleOutline),
+        Triple(RootTab.PROJECTS, "Coding", Icons.Outlined.Terminal),
+        Triple(RootTab.SETTINGS, "Settings", Icons.Outlined.Settings)
+    )
+    Column(
+        modifier = Modifier
+            .width(74.dp)
+            .fillMaxHeight()
+            .background(AdSurface)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        tabs.forEach { (tab, label, icon) ->
+            val selected = tab == active
+            Column(
+                modifier = Modifier
+                    .width(62.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .selectable(selected = selected, onClick = { onSelect(tab) }, role = Role.Tab)
+                    .padding(vertical = 9.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = label,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (selected) Ink else Muted2
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    label,
+                    fontSize = 9.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selected) Ink else Muted2
+                )
             }
         }
     }
@@ -957,52 +1001,51 @@ fun InfoBanner(
     kind: BannerKind = BannerKind.WARNING,
     action: (@Composable () -> Unit)? = null
 ) {
-    val bg: Color
     val fg: Color
-    val border: Color
     val icon: ImageVector
     when (kind) {
         BannerKind.WARNING -> {
-            bg = androidx.compose.ui.graphics.Color(0xFFFFF9EB)
             fg = AmberInk
-            border = androidx.compose.ui.graphics.Color(0xFFEEDaAB)
             icon = Icons.Outlined.Warning
         }
         BannerKind.LOCAL -> {
-            bg = BlueSoft
             fg = BlueInk
-            border = androidx.compose.ui.graphics.Color(0xFFC9D8F5)
             icon = Icons.Outlined.PhoneAndroid
         }
         BannerKind.DONE -> {
-            bg = GreenSoft
             fg = GreenInk
-            border = androidx.compose.ui.graphics.Color(0xFFCDEBDD)
             icon = Icons.Outlined.CheckCircle
         }
         BannerKind.CLOUD -> {
-            bg = VioletSoft
             fg = VioletInk
-            border = androidx.compose.ui.graphics.Color(0xFFDCD5F7)
             icon = Icons.Outlined.Cloud
         }
     }
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(13.dp),
-        color = bg,
-        border = BorderStroke(1.dp, border)
+        shape = RoundedCornerShape(14.dp),
+        color = AdSurface,
+        border = BorderStroke(1.dp, Line)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = fg)
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Surface2)
+                    .border(1.dp, Line, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp), tint = fg)
+            }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = fg)
+                Text(title, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                 Spacer(Modifier.height(1.dp))
-                Text(text, fontSize = 10.5.sp, lineHeight = 14.sp, color = fg.copy(alpha = 0.82f))
+                Text(text, fontSize = 10.5.sp, lineHeight = 14.sp, color = Muted)
             }
             if (action != null) {
                 Spacer(Modifier.width(8.dp))

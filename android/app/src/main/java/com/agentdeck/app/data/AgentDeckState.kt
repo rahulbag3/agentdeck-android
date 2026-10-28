@@ -2,6 +2,7 @@ package com.agentdeck.app.data
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -23,6 +24,8 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val PERSIST_INTERVAL_MS = 900L
+/** Attachments are copied into the workspace; keep them small enough to read. */
+private const val MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024
 
 data class ToastEvent(val id: Long, val text: String)
 
@@ -131,7 +134,9 @@ class AgentDeckState(
         private set
 
     var diffFileId by mutableStateOf<String?>(null)
-    var activityOpen by mutableStateOf(emptySet<String>())
+    /** Files picked in the composer but not sent yet, keyed by task id. */
+    var draftAttachments by mutableStateOf<Map<String, List<Attachment>>>(emptyMap())
+        private set
     var cloudStreaming by mutableStateOf(emptySet<String>())
         private set
     var repoContextLoading by mutableStateOf(emptySet<String>())
@@ -588,8 +593,10 @@ class AgentDeckState(
 
         // Detach before cancelling so the finishing job cannot clear a newer run.
         val job = cloudJobs.remove(taskId)
+        val agentJob = agentJobs.remove(taskId)
         cloudStreaming = cloudStreaming - taskId
         job?.cancel()
+        agentJob?.cancel()
 
         val now = System.currentTimeMillis()
         val hasPartial = task.messages.any {
@@ -610,9 +617,9 @@ class AgentDeckState(
                     id = newMessageId(),
                     role = MessageRole.SYSTEM,
                     text = if (hasPartial) {
-                        "Generation stopped.\nThe partial reply above was kept. Nothing was changed. Send a message to continue."
+                        "Generation stopped.\nThe partial reply above was kept. Tool results already reported stay in this task. Send a message to continue."
                     } else {
-                        "Generation stopped.\nNo reply text had arrived. Nothing was changed. Send a message to try again."
+                        "Generation stopped.\nNo reply text had arrived. Send a message to try again."
                     },
                     at = now
                 )
@@ -950,6 +957,12 @@ class AgentDeckState(
     fun loadLocalModel(modelId: String) {
         val current = model(modelId) ?: return
         if (!current.isLocal || current.localState != LocalModelState.UNLOADED) return
+        // `available` already swallowed the linker error. Without it every
+        // native call below throws UnsatisfiedLinkError and kills the app.
+        if (!LocalEngine.available) {
+            toast("Local engine can't start in this build · install the standard APK")
+            return
+        }
         val imported = importedModels.firstOrNull { it.id == modelId }
         if (imported != null) {
             unloadOtherLocalModels(keepId = imported.id)
@@ -1126,15 +1139,41 @@ class AgentDeckState(
 
     fun availableBackends(): List<String> = LocalEngine.devices()
 
-    /** Stops real on-device generation; the partial reply is kept by the job. */
+    /**
+     * Stops the on-device run at the next safe point. Native generation is
+     * cancelled immediately; the agent loop then finalizes with whatever text
+     * already arrived, so the partial reply is kept and no further steps run.
+     */
     fun stopLocalReply(taskId: String) {
         if (taskId !in localGenerating) return
-        localStopFlags[taskId]?.set(true)
+        localStopFlags.getOrPut(taskId) { AtomicBoolean(false) }.set(true)
         val modelId = task(taskId)?.modelId
         localHandles[modelId]?.let { handle ->
             scope.launch(Dispatchers.Default) { LocalEngine.nativeCancel(handle) }
         }
+        // A pending approval would otherwise hold the loop open.
+        agentApprovals[taskId]?.complete(false)
         toast("Stopping local generation…")
+    }
+
+    /** Ends a local run that was stopped outside a generation call. */
+    private fun finalizeStoppedLocal(taskId: String) {
+        val now = System.currentTimeMillis()
+        updateTask(taskId) {
+            it.copy(
+                status = TaskStatus.NEEDS_INPUT,
+                activeRun = false,
+                updatedAt = now,
+                plan = failActivePlan(it.plan),
+                activity = it.activity + ActivityEvent("local", "Stopped by you", now),
+                messages = it.messages + Message(
+                    id = newMessageId(),
+                    role = MessageRole.SYSTEM,
+                    text = "Generation stopped.\nNo further steps will run. Send a message to continue.",
+                    at = now
+                )
+            )
+        }
     }
 
     private fun ImportedModel.toModelOption(): ModelOption = ModelOption(
@@ -1838,10 +1877,102 @@ class AgentDeckState(
 
     // ----- messaging -----
 
-    fun sendMessage(taskId: String, rawText: String) {
+    fun draftAttachmentsFor(taskId: String): List<Attachment> = draftAttachments[taskId].orEmpty()
+
+    /**
+     * Copies picked documents into the project workspace under `attachments/`
+     * so the agent's file tools can open them, and keeps them on the draft.
+     * Uses the Storage Access Framework, so no storage permission is needed.
+     */
+    fun addDraftAttachments(taskId: String, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val task = task(taskId) ?: return
+        scope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri ->
+                    runCatching { saveAttachment(task, uri) }.getOrNull()
+                }
+            }
+            if (saved.isEmpty()) {
+                toast("No files added · 20 MB limit per file")
+                return@launch
+            }
+            if (saved.size < uris.size) toast("Added ${saved.size} of ${uris.size} · 20 MB limit per file")
+            val pdfs = saved.count { it.name.endsWith(".pdf", ignoreCase = true) }
+            if (pdfs > 0) {
+                toast("PDFs can't be read as text by this model")
+            }
+            draftAttachments = draftAttachments +
+                (taskId to (draftAttachmentsFor(taskId) + saved))
+        }
+    }
+
+    fun removeDraftAttachment(taskId: String, path: String) {
+        draftAttachments = draftAttachments +
+            (taskId to draftAttachmentsFor(taskId).filterNot { it.path == path })
+    }
+
+    fun clearDraftAttachments(taskId: String) {
+        if (taskId in draftAttachments) draftAttachments = draftAttachments - taskId
+    }
+
+    private fun saveAttachment(task: Task, uri: Uri): Attachment? {
+        val resolver = appContext.contentResolver
+        var name = "file"
+        var size = 0L
+        runCatching {
+            resolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0 && !cursor.isNull(nameIndex)) {
+                        name = cursor.getString(nameIndex) ?: name
+                    }
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+                }
+            }
+        }
+        val display = name.trim().ifBlank { "file" }
+        if (size > MAX_ATTACHMENT_BYTES) return null
+        val safe = display
+            .replace(Regex("[^A-Za-z0-9._ -]"), "_")
+            .takeLast(80)
+            .ifBlank { "file" }
+        val folder = File(workspace.dirFor(task.projectId), "attachments").apply { mkdirs() }
+        val target = File(folder, "${System.currentTimeMillis()}-$safe")
+        var copied = 0L
+        resolver.openInputStream(uri)?.use { input ->
+            target.outputStream().use { output ->
+                val buffer = ByteArray(64 * 1_024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    copied += read
+                    if (copied > MAX_ATTACHMENT_BYTES) break
+                    output.write(buffer, 0, read)
+                }
+            }
+        } ?: return null
+        if (copied <= 0L || copied > MAX_ATTACHMENT_BYTES) {
+            target.delete()
+            return null
+        }
+        return Attachment(
+            name = display,
+            path = "attachments/${target.name}",
+            size = if (size > 0) size else copied
+        )
+    }
+
+    fun sendMessage(taskId: String, rawText: String, attachments: List<Attachment> = emptyList()) {
         val task = task(taskId) ?: return
         val text = rawText.trim()
-        if (text.isEmpty() || task.status == TaskStatus.COMPLETED) return
+        if (text.isEmpty() && attachments.isEmpty()) return
+        if (task.status == TaskStatus.COMPLETED) return
         if (isTaskBusy(taskId)) return
 
         if (isCloudTask(task)) {
@@ -1855,9 +1986,11 @@ class AgentDeckState(
                 role = MessageRole.USER,
                 text = text,
                 at = System.currentTimeMillis(),
-                delivery = DeliveryState.DELIVERED
+                delivery = DeliveryState.DELIVERED,
+                attachments = attachments
             )
             updateTask(taskId) { it.copy(messages = it.messages + message, updatedAt = message.at) }
+            clearDraftAttachments(taskId)
             startCloudReply(taskId)
             return
         }
@@ -1880,9 +2013,11 @@ class AgentDeckState(
                 role = MessageRole.USER,
                 text = text,
                 at = System.currentTimeMillis(),
-                delivery = DeliveryState.SENDING
+                delivery = DeliveryState.SENDING,
+                attachments = attachments
             )
             updateTask(taskId) { it.copy(messages = it.messages + message, updatedAt = message.at) }
+            clearDraftAttachments(taskId)
             sending = sending + taskId
             scope.launch {
                 delay(450)
@@ -1899,7 +2034,8 @@ class AgentDeckState(
                 role = MessageRole.USER,
                 text = text,
                 at = System.currentTimeMillis(),
-                delivery = DeliveryState.FAILED
+                delivery = DeliveryState.FAILED,
+                attachments = attachments
             )
             updateTask(taskId) { it.copy(messages = it.messages + message, updatedAt = message.at) }
             toast("Host offline · message not sent")
@@ -1911,9 +2047,11 @@ class AgentDeckState(
             role = MessageRole.USER,
             text = text,
             at = System.currentTimeMillis(),
-            delivery = DeliveryState.SENDING
+            delivery = DeliveryState.SENDING,
+            attachments = attachments
         )
         updateTask(taskId) { it.copy(messages = it.messages + message, updatedAt = message.at) }
+        clearDraftAttachments(taskId)
         sending = sending + taskId
         scope.launch {
             delay(600)
@@ -2141,6 +2279,37 @@ class AgentDeckState(
      * writes/commands approved by the user) → feed results back, until the
      * model replies without tool calls or the step budget is hit.
      */
+    /** Encodes the latest image attachments so a vision model can see them. */
+    private suspend fun imageDataUrls(task: Task): List<String> = withContext(Dispatchers.IO) {
+        val message = task.messages.lastOrNull { candidate ->
+            candidate.role == MessageRole.USER &&
+                candidate.attachments.any { ImageInput.isImage(it.name) }
+        } ?: return@withContext emptyList()
+        val projectId = task.projectId.ifBlank { "default" }
+        message.attachments.asSequence()
+            .filter { ImageInput.isImage(it.name) }
+            .take(ImageInput.MAX_IMAGES)
+            .mapNotNull { attachment ->
+                val file = runCatching {
+                    workspace.safeFile(projectId, attachment.path)
+                }.getOrNull() ?: return@mapNotNull null
+                ImageInput.dataUrl(file)
+            }
+            .toList()
+    }
+
+    private fun attachImagesToLastUserTurn(
+        turns: List<CloudTurn>,
+        images: List<String>
+    ): List<CloudTurn> {
+        if (images.isEmpty()) return turns
+        val index = turns.indexOfLast { it.role == "user" }
+        if (index < 0) return turns
+        return turns.toMutableList().also {
+            it[index] = it[index].copy(images = images)
+        }
+    }
+
     private fun runAgentLoop(taskId: String, dropTrailingAssistant: Boolean = false) {
         if (agentJobs[taskId]?.isActive == true) return
         val initial = task(taskId) ?: return
@@ -2163,11 +2332,20 @@ class AgentDeckState(
 
         agentJobs.remove(taskId)?.cancel()
         lastCloudRateLimited = false
+        // Mark the whole run in flight so the composer can offer Stop during
+        // the delay before the first token, not only after text arrives.
+        if (usingCloud) {
+            cloudStreaming = cloudStreaming + taskId
+        } else {
+            localStopFlags[taskId] = AtomicBoolean(false)
+            localGenerating = localGenerating + taskId
+        }
         agentJobs[taskId] = scope.launch {
             val self = currentCoroutineContext()[Job]
             val cfg = cloudConfig.copy(
                 model = initial.cloudModel?.takeIf { it.isNotBlank() } ?: cloudConfig.model
             )
+            val images = if (usingCloud) imageDataUrls(initial) else emptyList()
             val systemPrompt = ToolParser.buildSystemPrompt(
                 coding = coding,
                 memorySnapshot = memoryStore.snapshot(),
@@ -2179,10 +2357,15 @@ class AgentDeckState(
                 ).format(java.util.Date())
             )
             val baseTurns = when {
-                usingCloud -> buildCloudTurns(initial.messages, dropTrailingAssistant)
+                usingCloud -> buildCloudTurns(
+                    initial.messages,
+                    dropTrailingAssistant,
+                    imagesVisible = images.isNotEmpty()
+                )
                 dropTrailingAssistant -> buildLocalTurns(initial.messages, dropTrailingAssistant = true)
                 else -> buildLocalTurns(initial.messages)
             }
+            val modelTurns = attachImagesToLastUserTurn(baseTurns, images)
             var extraTurns = emptyList<CloudTurn>()
             var noToolReplies = 0
             var needleDelegations = 0
@@ -2242,14 +2425,27 @@ class AgentDeckState(
                 }
                 for (step in 0 until MAX_AGENT_STEPS) {
                     currentCoroutineContext().ensureActive()
+                    if (!usingCloud && localStopFlags[taskId]?.get() == true) {
+                        finalizeStoppedLocal(taskId)
+                        return@launch
+                    }
                     val replyText = if (usingCloud) {
                         streamAgentReply(
                             taskId, apiKey.orEmpty(), cfg.copy(model = modelCandidates[candidateIndex]),
-                            initial, baseTurns + extraTurns, systemPrompt,
-                            failHard = candidateIndex >= modelCandidates.size - 1 || lastCloudRateLimited
+                            initial, modelTurns + extraTurns, systemPrompt,
+                            failHard = candidateIndex >= modelCandidates.size - 1 || lastCloudRateLimited,
+                            onImagesDropped = {
+                                scope.launch {
+                                    addSystemNotice(
+                                        taskId,
+                                        "Image not sent",
+                                        "This model rejected image input. Switch to a vision-capable model to describe the image."
+                                    )
+                                }
+                            }
                         )
                     } else {
-                        localAgentReply(taskId, initial, baseTurns + extraTurns, systemPrompt)
+                        localAgentReply(taskId, initial, modelTurns + extraTurns, systemPrompt)
                     } ?: run {
                         candidateIndex++
                         if (usingCloud && candidateIndex < modelCandidates.size && !lastCloudRateLimited) {
@@ -2275,6 +2471,13 @@ class AgentDeckState(
                     // instead of silently ending the run.
                     if (calls.isEmpty() && ToolParser.looksLikeToolAttempt(replyText) && repairs < 2) {
                         repairs++
+                        Logger.debug(
+                            "Unparsed tool attempt",
+                            mapOf(
+                                "chars" to replyText.length,
+                                "raw" to replyText.take(1_500).replace("\n", "\\n")
+                            )
+                        )
                         addSystemNotice(
                             taskId,
                             "Tool call not understood",
@@ -2350,7 +2553,15 @@ class AgentDeckState(
                 Logger.error("Agent loop failed", e)
                 agentFailure(taskId, e.message ?: "The agent run failed.")
             } finally {
-                if (agentJobs[taskId] === self) agentJobs.remove(taskId)
+                if (agentJobs[taskId] === self) {
+                    agentJobs.remove(taskId)
+                    if (usingCloud) {
+                        cloudStreaming = cloudStreaming - taskId
+                    } else {
+                        localGenerating = localGenerating - taskId
+                        localStopFlags.remove(taskId)
+                    }
+                }
             }
         }
     }
@@ -2363,7 +2574,8 @@ class AgentDeckState(
         initial: Task,
         turns: List<CloudTurn>,
         systemPrompt: String,
-        failHard: Boolean = true
+        failHard: Boolean = true,
+        onImagesDropped: (() -> Unit)? = null
     ): String? {
         val replyId = newMessageId()
         val buffer = StringBuilder()
@@ -2399,17 +2611,21 @@ class AgentDeckState(
                 }
             }
         }
-        val result = cloudClient.streamChat(
-            baseUrl = cfg.baseUrl,
-            apiKey = apiKey,
-            model = cfg.model,
-            systemPrompt = systemPrompt,
-            repositoryContext = if (initial.kind == TaskKind.CODING) initial.repoContext?.digest else null,
-            turns = turns
-        ) { delta ->
-            synchronized(buffer) { buffer.append(delta) }
+        val result = try {
+            cloudClient.streamChat(
+                baseUrl = cfg.baseUrl,
+                apiKey = apiKey,
+                model = cfg.model,
+                systemPrompt = systemPrompt,
+                repositoryContext = if (initial.kind == TaskKind.CODING) initial.repoContext?.digest else null,
+                turns = turns,
+                onImagesDropped = onImagesDropped
+            ) { delta ->
+                synchronized(buffer) { buffer.append(delta) }
+            }
+        } finally {
+            ticker.cancel()
         }
-        ticker.cancel()
         val text = synchronized(buffer) { buffer.toString() }
         val now = System.currentTimeMillis()
         return result.fold(
@@ -2498,6 +2714,45 @@ class AgentDeckState(
         }
         val text = result.second.trim()
         val now = System.currentTimeMillis()
+        if (localStopFlags[taskId]?.get() == true) {
+            val kept = text.isNotBlank()
+            updateTask(taskId) {
+                val messages = if (kept) {
+                    it.messages + Message(
+                        id = newMessageId(),
+                        role = MessageRole.AGENT,
+                        text = text,
+                        at = now,
+                        modelName = imported.name,
+                        provider = ModelProvider.LOCAL
+                    )
+                } else {
+                    it.messages
+                }
+                it.copy(
+                    status = TaskStatus.NEEDS_INPUT,
+                    activeRun = false,
+                    updatedAt = now,
+                    plan = failActivePlan(it.plan),
+                    activity = it.activity + ActivityEvent(
+                        "local",
+                        if (kept) "Stopped by you · partial reply kept" else "Stopped by you",
+                        now
+                    ),
+                    messages = messages + Message(
+                        id = newMessageId(),
+                        role = MessageRole.SYSTEM,
+                        text = if (kept) {
+                            "Generation stopped.\nThe partial reply above was kept. No further steps will run. Send a message to continue."
+                        } else {
+                            "Generation stopped.\nNo reply text had arrived. Send a message to try again."
+                        },
+                        at = now
+                    )
+                )
+            }
+            return null
+        }
         if (text.isBlank()) {
             updateTask(taskId) {
                 it.copy(
@@ -2542,6 +2797,7 @@ class AgentDeckState(
                     title = when (call.name) {
                         "write" -> "Write file"
                         "run" -> "Run command"
+                        "http" -> "HTTP request"
                         "dial" -> "Open dialer"
                         "sms_compose" -> "Compose message"
                         "share_text" -> "Share text"
@@ -2550,6 +2806,7 @@ class AgentDeckState(
                     body = when (call.name) {
                         "write" -> "Allow the agent to write ${call.args["path"].orEmpty()} in the workspace?"
                         "run" -> "Allow the agent to run: ${call.args["command"].orEmpty()}"
+                        "http" -> "Allow the agent to send ${call.args["method"].orEmpty().ifBlank { "GET" }} to ${call.args["url"].orEmpty()}?"
                         "dial" -> "Open the dialer for ${call.args["number"].orEmpty()}? The call is not placed until you press call."
                         "sms_compose" -> "Open Messages for ${call.args["number"].orEmpty()} with this text? The message is not sent until you press send.\n\n${call.args["text"].orEmpty().take(300)}"
                         "share_text" -> "Open the share sheet with this text?\n\n${call.args["text"].orEmpty().take(300)}"
@@ -3365,6 +3622,21 @@ class AgentDeckState(
         toast("Retry started")
     }
 
+    /** Re-runs the last assistant turn after a stop or an interrupted reply. */
+    fun retryLastTurn(taskId: String) {
+        val task = task(taskId) ?: return
+        if (isTaskBusy(taskId) || task.status == TaskStatus.COMPLETED) return
+        val stamp = System.currentTimeMillis()
+        updateTask(taskId) {
+            it.copy(
+                updatedAt = stamp,
+                activity = it.activity + ActivityEvent("status", "Retry requested", stamp)
+            )
+        }
+        runAgentLoop(taskId, dropTrailingAssistant = true)
+        toast("Retry started")
+    }
+
     fun retryTask(taskId: String) {
         val task = task(taskId) ?: return
         if (task.status != TaskStatus.FAILED) return
@@ -3679,10 +3951,6 @@ class AgentDeckState(
 
     // ----- host & models timers -----
 
-    fun toggleActivity(taskId: String) {
-        activityOpen = if (taskId in activityOpen) activityOpen - taskId else activityOpen + taskId
-    }
-
     fun selectDiffFile(fileId: String?) { diffFileId = fileId }
 
     fun disconnectHost() {
@@ -3845,7 +4113,6 @@ class AgentDeckState(
         taskQuery = ""
         statusFilter = StatusFilter.ALL
         diffFileId = null
-        activityOpen = emptySet()
         cloudStreaming = emptySet()
         repoContextLoading = emptySet()
         sending = emptySet()

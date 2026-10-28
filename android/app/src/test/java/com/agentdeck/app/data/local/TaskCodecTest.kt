@@ -1,6 +1,7 @@
 package com.agentdeck.app.data.local
 
 import com.agentdeck.app.data.ActivityEvent
+import com.agentdeck.app.data.Attachment
 import com.agentdeck.app.data.ChangeType
 import com.agentdeck.app.data.ChangedFile
 import com.agentdeck.app.data.CheckRun
@@ -39,7 +40,15 @@ class TaskCodecTest {
             createdAt = 1_700_000_000_000,
             updatedAt = 1_700_000_100_000,
             messages = listOf(
-                Message("m-1", MessageRole.USER, "Fix it.", 1_700_000_000_100),
+                Message(
+                    id = "m-1",
+                    role = MessageRole.USER,
+                    text = "Fix it.",
+                    at = 1_700_000_000_100,
+                    attachments = listOf(
+                        Attachment("parser.log", "attachments/1700000000-parser.log", 2_048)
+                    )
+                ),
                 Message(
                     id = "m-2",
                     role = MessageRole.AGENT,

@@ -20,7 +20,11 @@ import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
-data class CloudTurn(val role: String, val content: String)
+data class CloudTurn(
+    val role: String,
+    val content: String,
+    val images: List<String> = emptyList()
+)
 
 /**
  * Structured cloud errors. Each subtype knows whether a retry can plausibly
@@ -80,6 +84,7 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
         systemPrompt: String,
         repositoryContext: String?,
         turns: List<CloudTurn>,
+        onImagesDropped: (() -> Unit)? = null,
         onDelta: (String) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val endpoint = endpointOrNull(baseUrl)
@@ -87,7 +92,6 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
                 CloudError.InvalidResponse("The API base URL is not valid.")
             )
 
-        val messages = JSONArray()
         val systemContent = buildString {
             append(systemPrompt)
             if (!repositoryContext.isNullOrBlank()) {
@@ -95,35 +99,76 @@ class CloudClient(private val client: OkHttpClient = defaultClient()) {
                 append(repositoryContext)
             }
         }
-        messages.put(JSONObject().put("role", "system").put("content", systemContent))
-        turns.forEach { turn ->
-            if (turn.content.isNotBlank()) {
-                messages.put(JSONObject().put("role", turn.role).put("content", turn.content))
-            }
-        }
-        val payload = JSONObject()
-            .put("model", model)
-            .put("stream", true)
-            .put("temperature", 0.2)
-            .put("messages", messages)
-            .toString()
+        var includeImages = turns.any { it.images.isNotEmpty() }
+        var droppedImages = false
 
-        val request = Request.Builder()
+        fun payload(): String {
+            val messages = JSONArray()
+            messages.put(JSONObject().put("role", "system").put("content", systemContent))
+            if (droppedImages) {
+                messages.put(
+                    JSONObject()
+                        .put("role", "system")
+                        .put(
+                            "content",
+                            "The image attachment was rejected by this model, so its pixels are not available. Tell the user you cannot see the image."
+                        )
+                )
+            }
+            turns.forEach { turn ->
+                if (turn.content.isBlank() && turn.images.isEmpty()) return@forEach
+                val content: Any = if (!includeImages || turn.images.isEmpty()) {
+                    turn.content
+                } else {
+                    JSONArray().apply {
+                        if (turn.content.isNotBlank()) {
+                            put(JSONObject().put("type", "text").put("text", turn.content))
+                        }
+                        turn.images.forEach { url ->
+                            put(
+                                JSONObject()
+                                    .put("type", "image_url")
+                                    .put("image_url", JSONObject().put("url", url))
+                            )
+                        }
+                    }
+                }
+                messages.put(JSONObject().put("role", turn.role).put("content", content))
+            }
+            return JSONObject()
+                .put("model", model)
+                .put("stream", true)
+                .put("temperature", 0.2)
+                .put("messages", messages)
+                .toString()
+        }
+
+        fun request(): Request = Request.Builder()
             .url(endpoint)
             .header("Authorization", "Bearer ${apiKey.trim()}")
             .header("Accept", "text/event-stream, application/json")
-            .post(payload.toRequestBody(JSON))
+            .post(payload().toRequestBody(JSON))
             .build()
 
         var delivered = false
         var attempt = 0
         while (true) {
             attempt++
-            val outcome = executeStream(request) { delta ->
+            val outcome = executeStream(request()) { delta ->
                 delivered = true
                 onDelta(delta)
             }
             val error = outcome.exceptionOrNull() as? CloudError
+            // A text-only model rejects image content with a 4xx. Drop the
+            // images and retry once so the chat still works.
+            if (includeImages && !droppedImages && !delivered && error != null &&
+                error.statusCode in setOf(400, 404, 415, 422)
+            ) {
+                includeImages = false
+                droppedImages = true
+                onImagesDropped?.invoke()
+                continue
+            }
             val rateLimited = error is CloudError.RateLimitError
             // Rate limits must not be hammered: one retry after a real wait,
             // otherwise the app burns the free-tier quota by itself.

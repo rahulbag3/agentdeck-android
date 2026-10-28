@@ -2,6 +2,7 @@ package com.agentdeck.app.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +54,7 @@ import com.agentdeck.app.ui.theme.BlueSoft
 import com.agentdeck.app.ui.theme.GreenInk
 import com.agentdeck.app.ui.theme.GreenSoft
 import com.agentdeck.app.ui.theme.Ink
+import com.agentdeck.app.ui.theme.InkSoft
 import com.agentdeck.app.ui.theme.Line
 import com.agentdeck.app.ui.theme.Muted
 import com.agentdeck.app.ui.theme.Muted2
@@ -133,21 +135,22 @@ private fun CreateProjectCard(state: AgentDeckState) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(BlueSoft),
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(Surface2)
+                        .border(1.dp, Line, RoundedCornerShape(9.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = BlueInk)
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(15.dp), tint = InkSoft)
                 }
                 Spacer(Modifier.width(9.dp))
-                Text("New project", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Text("New project", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                 Spacer(Modifier.weight(1f))
                 Text(
                     if (expanded) "Hide" else "Create",
                     fontSize = 10.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BlueInk,
+                    fontWeight = FontWeight.Medium,
+                    color = InkSoft,
                     modifier = Modifier
                         .clip(RoundedCornerShape(7.dp))
                         .clickable { expanded = !expanded }
@@ -237,17 +240,18 @@ private fun HostCard(state: AgentDeckState, online: Boolean) {
             Row(
                 modifier = Modifier
                     .clip(PillShape)
-                    .background(if (online) GreenSoft else AmberSoft)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .background(Surface2)
+                    .border(1.dp, Line, PillShape)
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(Modifier.size(5.dp).clip(CircleShape).background(if (online) GreenInk else AmberInk))
                 Spacer(Modifier.width(5.dp))
                 Text(
                     if (online) "Connected" else "Offline",
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (online) GreenInk else AmberInk
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = InkSoft
                 )
             }
         }
@@ -288,7 +292,7 @@ private fun ProjectRow(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         color = AdSurface,
-        border = BorderStroke(1.dp, if (active) androidx.compose.ui.graphics.Color(0xFFC5D5F6) else Line)
+        border = BorderStroke(1.dp, Line)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
@@ -296,29 +300,31 @@ private fun ProjectRow(
         ) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (active) BlueSoft else Surface2),
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Surface2)
+                    .border(1.dp, Line, RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(19.dp), tint = if (active) BlueInk else Ink)
+                Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(17.dp), tint = InkSoft)
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(project.name, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Text(project.name, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                     if (active) {
                         Spacer(Modifier.width(7.dp))
                         Row(
                             modifier = Modifier
                                 .clip(PillShape)
-                                .background(BlueSoft)
+                                .background(Surface2)
+                                .border(1.dp, Line, PillShape)
                                 .padding(horizontal = 6.dp, vertical = 1.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(10.dp), tint = BlueInk)
-                            Spacer(Modifier.width(2.dp))
-                            Text("Active", fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = BlueInk)
+                            Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(9.dp), tint = GreenInk)
+                            Spacer(Modifier.width(3.dp))
+                            Text("Active", fontSize = 8.5.sp, fontWeight = FontWeight.Medium, color = InkSoft)
                         }
                     }
                 }

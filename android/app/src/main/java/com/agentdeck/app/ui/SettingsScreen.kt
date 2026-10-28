@@ -2,6 +2,7 @@ package com.agentdeck.app.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -308,7 +310,7 @@ fun SettingsScreen(state: AgentDeckState) {
                     ) {
                         Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(14.dp), tint = BlueInk)
                         Spacer(Modifier.width(8.dp))
-                        Text("Manage instructions & memory", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BlueInk)
+                        Text("Manage instructions & memory", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                     }
                 }
             }
@@ -410,12 +412,13 @@ fun SettingsScreen(state: AgentDeckState) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(VioletSoft),
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(Surface2)
+                                .border(1.dp, Line, RoundedCornerShape(9.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Outlined.Cloud, contentDescription = null, modifier = Modifier.size(19.dp), tint = VioletInk)
+                            Icon(Icons.Outlined.Cloud, contentDescription = null, modifier = Modifier.size(16.dp), tint = VioletInk)
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
@@ -467,12 +470,13 @@ fun SettingsScreen(state: AgentDeckState) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(GreenSoft),
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(Surface2)
+                                .border(1.dp, Line, RoundedCornerShape(9.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(19.dp), tint = GreenInk)
+                            Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(16.dp), tint = GreenInk)
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
@@ -519,12 +523,13 @@ fun SettingsScreen(state: AgentDeckState) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(BlueSoft),
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(Surface2)
+                                .border(1.dp, Line, RoundedCornerShape(9.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(19.dp), tint = BlueInk)
+                            Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, modifier = Modifier.size(16.dp), tint = BlueInk)
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
@@ -755,7 +760,8 @@ fun SettingsScreen(state: AgentDeckState) {
                             modifier = Modifier
                                 .size(29.dp)
                                 .clip(RoundedCornerShape(9.dp))
-                                .background(AmberSoft),
+                                .background(Surface2)
+                                .border(1.dp, Line, RoundedCornerShape(9.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -880,28 +886,6 @@ fun SettingsScreen(state: AgentDeckState) {
                 }
             }
 
-            item { SettingsLabel("Profile") }
-            item {
-                AdCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(33.dp)
-                                .clip(CircleShape)
-                                .background(Ink),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("R", color = AdSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Local profile", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
-                            Text("No account or sign-in · data stays on this device", style = AdType.Tiny)
-                        }
-                    }
-                }
-            }
-
             item {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 6.dp),
@@ -926,7 +910,11 @@ fun SettingsScreen(state: AgentDeckState) {
 private fun SettingsLabel(text: String) {
     Text(
         text.uppercase(),
-        style = AdType.Section,
+        fontFamily = com.agentdeck.app.ui.theme.Mono,
+        fontSize = 9.5.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 1.sp,
+        color = Muted2,
         modifier = Modifier.padding(start = 4.dp, top = 12.dp, bottom = 1.dp)
     )
 }
@@ -943,7 +931,8 @@ private fun LocalModelRow(model: ModelOption, state: AgentDeckState) {
             modifier = Modifier
                 .size(30.dp)
                 .clip(RoundedCornerShape(9.dp))
-                .background(Surface2),
+                .background(Surface2)
+                .border(1.dp, Line, RoundedCornerShape(9.dp)),
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Outlined.Memory, contentDescription = null, modifier = Modifier.size(15.dp), tint = Muted)

@@ -328,6 +328,49 @@ class ToolParserResilienceTest {
     }
 
     @Test
+    fun `dots preview attributes without parameter tags become an http call`() {
+        val text = """<dots_function_call> <dots_function_call> http" method="GET" url="https://ipinfo.co/json"> </tool_block> </tool_call>"""
+
+        val call = ToolParser.parse(text).single()
+        assertEquals("http", call.name)
+        assertEquals("GET", call.args["method"])
+        assertEquals("https://ipinfo.co/json", call.args["url"])
+        assertTrue(call.needsApproval)
+    }
+
+    @Test
+    fun `named attribute call keeps its explicit tool`() {
+        val text = """<dots_function_call name="web_search" query="Kotlin 2.4 release" />"""
+
+        val call = ToolParser.parse(text).single()
+        assertEquals("web_search", call.name)
+        assertEquals("Kotlin 2.4 release", call.args["query"])
+    }
+
+    @Test
+    fun `attribute-style wrapper counts as a tool attempt`() {
+        val text = """<dots_function_call method="GET" url="https://example.com">"""
+
+        assertTrue(ToolParser.looksLikeToolAttempt(text))
+    }
+
+    @Test
+    fun `a bare wrapper tag in prose is not a tool attempt`() {
+        val text = "Use the <tool_call> wrapper when you want to call a tool."
+
+        assertTrue(ToolParser.parse(text).isEmpty())
+        assertFalse(ToolParser.looksLikeToolAttempt(text))
+    }
+
+    @Test
+    fun `a reply that opens with a wrapper counts as an attempt`() {
+        val text = "<dots_function_call>\n"
+
+        assertTrue(ToolParser.parse(text).isEmpty())
+        assertTrue(ToolParser.looksLikeToolAttempt(text))
+    }
+
+    @Test
     fun `named xml invoke supplies its tool and path`() {
         val text = """
             <invoke name="read">
@@ -391,6 +434,71 @@ class ToolParserResilienceTest {
         """.trimIndent()
 
         assertTrue(ToolParser.parse(text).isEmpty())
+    }
+
+    @Test
+    fun `dots read_file aliases map to the workspace read tool`() {
+        val text = """
+            <dots_function_call>
+            <invoke name="read_file">
+            <parameter name="file_path">/home/user/workspace/attachments/123-key-features.html</parameter>
+            </invoke>
+            </dots_function_call>
+        """.trimIndent()
+
+        val call = ToolParser.parse(text).single()
+        assertEquals("read", call.name)
+        assertEquals("/home/user/workspace/attachments/123-key-features.html", call.args["path"])
+    }
+
+    @Test
+    fun `fenced tool aliases and argument aliases are normalised`() {
+        val text = """
+            ```agentdeck-tool read_file file_path="attachments/page.html"
+            ```
+        """.trimIndent()
+
+        val call = ToolParser.parse(text).single()
+        assertEquals("read", call.name)
+        assertEquals("attachments/page.html", call.args["path"])
+    }
+
+    @Test
+    fun `json read_file alias is normalised`() {
+        val text = """{"name":"read_file","arguments":{"file_path":"attachments/a.txt"}}"""
+
+        val call = ToolParser.parse(text).single()
+        assertEquals("read", call.name)
+        assertEquals("attachments/a.txt", call.args["path"])
+    }
+
+    @Test
+    fun `sandbox attachment paths map back to the project workspace`() {
+        assertEquals(
+            "attachments/x.html",
+            normalizeWorkspacePath("/home/user/workspace/attachments/x.html")
+        )
+        assertEquals("attachments/x.html", normalizeWorkspacePath("/mnt/data/attachments/x.html"))
+        assertEquals("attachments/x.html", normalizeWorkspacePath("/tmp/whatever/attachments/x.html"))
+        assertEquals("src/Main.kt", normalizeWorkspacePath("/workspace/src/Main.kt"))
+        assertEquals("src/Main.kt", normalizeWorkspacePath("./src/Main.kt"))
+    }
+
+    @Test
+    fun `hybrid json body inside a broken xml wrapper is salvaged`() {
+        val text = """
+            <dots_function_call>
+            <dots_function_call>
+            agentdeck-tool">
+                "action": "read",
+                "parameters": {"path": "attachments/1793201421478-key-features.html"}
+            }
+            </tool_call>
+        """.trimIndent()
+
+        val call = ToolParser.parse(text).single()
+        assertEquals("read", call.name)
+        assertEquals("attachments/1793201421478-key-features.html", call.args["path"])
     }
 
     private fun toolNames(toolsJson: String): Set<String> {

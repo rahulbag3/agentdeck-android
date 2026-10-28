@@ -132,34 +132,57 @@ fun AgentDeckApp(viewModel: AgentDeckViewModel = viewModel()) {
 
     Box(Modifier.fillMaxSize().background(Canvas)) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val appWidth = if (maxWidth > 430.dp) 430.dp else maxWidth
+            val landscape = maxWidth > maxHeight
+            val appWidth = if (!landscape && maxWidth > 430.dp) 430.dp else maxWidth
             Surface(
-                modifier = Modifier
-                    .width(appWidth)
-                    .fillMaxHeight()
-                    .align(Alignment.TopCenter),
+                modifier = if (landscape) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier
+                        .width(appWidth)
+                        .fillMaxHeight()
+                        .align(Alignment.TopCenter)
+                },
                 color = Surface2,
-                shadowElevation = if (maxWidth > 430.dp) 18.dp else 0.dp
+                shadowElevation = if (!landscape && maxWidth > 430.dp) 18.dp else 0.dp
             ) {
                 when (currentScreen) {
                     is Screen.Root -> {
-                        Column(Modifier.fillMaxSize()) {
-                            Box(Modifier.weight(1f)) {
-                                when (currentScreen.tab) {
-                                    RootTab.HOME -> HomeScreen(state)
-                                    RootTab.TASKS -> TasksScreen(state, TaskKind.CHAT)
-                                    RootTab.PROJECTS -> TasksScreen(state, TaskKind.CODING)
-                                    RootTab.SETTINGS -> SettingsScreen(state)
+                        val rootContent: @Composable () -> Unit = {
+                            when (currentScreen.tab) {
+                                RootTab.HOME -> HomeScreen(state)
+                                RootTab.TASKS -> TasksScreen(state, TaskKind.CHAT)
+                                RootTab.PROJECTS -> TasksScreen(state, TaskKind.CODING)
+                                RootTab.SETTINGS -> SettingsScreen(state)
+                            }
+                        }
+                        if (landscape) {
+                            Row(Modifier.fillMaxSize()) {
+                                AdNavRail(active = currentScreen.tab, onSelect = state::selectRoot)
+                                Box(Modifier.width(1.dp).fillMaxHeight().background(Line))
+                                Column(Modifier.weight(1f).fillMaxHeight()) {
+                                    Box(Modifier.weight(1f)) { rootContent() }
+                                    if (!state.online) {
+                                        OfflinePill(
+                                            modifier = Modifier
+                                                .align(Alignment.CenterHorizontally)
+                                                .padding(bottom = 6.dp)
+                                        )
+                                    }
                                 }
                             }
-                            if (!state.online) {
-                                OfflinePill(
-                                    modifier = Modifier
-                                        .align(Alignment.CenterHorizontally)
-                                        .padding(bottom = 8.dp)
-                                )
+                        } else {
+                            Column(Modifier.fillMaxSize()) {
+                                Box(Modifier.weight(1f)) { rootContent() }
+                                if (!state.online) {
+                                    OfflinePill(
+                                        modifier = Modifier
+                                            .align(Alignment.CenterHorizontally)
+                                            .padding(bottom = 8.dp)
+                                    )
+                                }
+                                AdBottomBar(active = currentScreen.tab, onSelect = state::selectRoot)
                             }
-                            AdBottomBar(active = currentScreen.tab, onSelect = state::selectRoot)
                         }
                     }
                     is Screen.TaskScreen -> TaskScreen(state, currentScreen.taskId)
@@ -258,7 +281,8 @@ private fun AppLockScreen(state: AgentDeckState) {
             modifier = Modifier
                 .size(56.dp)
                 .clip(CircleShape)
-                .background(AmberSoft),
+                .background(Surface2)
+                .border(1.dp, Line, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(24.dp), tint = AmberInk)

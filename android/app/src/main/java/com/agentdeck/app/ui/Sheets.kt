@@ -86,6 +86,7 @@ import com.agentdeck.app.ui.theme.GreenSoft
 import com.agentdeck.app.ui.theme.Ink
 import com.agentdeck.app.ui.theme.InkSoft
 import com.agentdeck.app.ui.theme.Line
+import com.agentdeck.app.ui.theme.LineStrong
 import com.agentdeck.app.ui.theme.Mono
 import com.agentdeck.app.ui.theme.Muted
 import com.agentdeck.app.ui.theme.Muted2
@@ -172,18 +173,19 @@ private fun ProjectsSheet(state: AgentDeckState) {
             onClick = { state.switchProject(project.id) },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(13.dp),
-            color = if (active) androidx.compose.ui.graphics.Color(0xFFFBFCFF) else AdSurface,
-            border = BorderStroke(1.dp, if (active) androidx.compose.ui.graphics.Color(0xFFC5D5F6) else Line)
+            color = if (active) Surface2 else AdSurface,
+            border = BorderStroke(1.dp, Line)
         ) {
             Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(35.dp)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(Surface2),
+                        .size(33.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Surface2)
+                        .border(1.dp, Line, RoundedCornerShape(10.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(17.dp), tint = Ink)
+                    Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(16.dp), tint = InkSoft)
                 }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
@@ -206,10 +208,11 @@ private fun ProjectsSheet(state: AgentDeckState) {
                         modifier = Modifier
                             .size(22.dp)
                             .clip(androidx.compose.foundation.shape.CircleShape)
-                            .background(BlueSoft),
+                            .background(Surface2)
+                            .border(1.dp, Line, androidx.compose.foundation.shape.CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Outlined.Check, contentDescription = "Active", modifier = Modifier.size(12.dp), tint = BlueInk)
+                        Icon(Icons.Outlined.Check, contentDescription = "Active", modifier = Modifier.size(12.dp), tint = GreenInk)
                     }
                 }
             }
@@ -353,21 +356,16 @@ private fun ModelSheetRow(
         enabled = selectable,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        color = if (selected) androidx.compose.ui.graphics.Color(0xFFFBFCFF) else AdSurface,
-        border = BorderStroke(1.dp, if (selected) androidx.compose.ui.graphics.Color(0xFFC5D5F6) else Line)
+        color = if (selected) Surface2 else AdSurface,
+        border = BorderStroke(1.dp, if (selected) LineStrong else Line)
     ) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
                     .size(30.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(
-                        when {
-                            local -> BlueSoft
-                            cloud -> VioletSoft
-                            else -> GraySoft
-                        }
-                    ),
+                    .background(Surface2)
+                    .border(1.dp, Line, RoundedCornerShape(9.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -408,21 +406,23 @@ private fun ModelSheetRow(
                         local -> Box(
                             modifier = Modifier
                                 .clip(PillShape)
-                                .background(tone.bg)
+                                .background(Surface2)
+                                .border(1.dp, Line, PillShape)
                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
-                            Text(model.localState?.label ?: "Unavailable", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = tone.fg)
+                            Text(model.localState?.label ?: "Unavailable", fontSize = 8.sp, fontWeight = FontWeight.Medium, color = tone.fg)
                         }
                         cloud -> Box(
                             modifier = Modifier
                                 .clip(PillShape)
-                                .background(tone.bg)
+                                .background(Surface2)
+                                .border(1.dp, Line, PillShape)
                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
                             Text(
                                 if (selectable) "BYOK · analysis" else "Not configured",
-                                fontSize = 7.5.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Medium,
                                 color = tone.fg
                             )
                         }
@@ -435,10 +435,11 @@ private fun ModelSheetRow(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(BlueSoft),
+                        .background(Surface2)
+                        .border(1.dp, Line, androidx.compose.foundation.shape.CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Outlined.Check, contentDescription = "Selected", modifier = Modifier.size(12.dp), tint = BlueInk)
+                    Icon(Icons.Outlined.Check, contentDescription = "Selected", modifier = Modifier.size(12.dp), tint = GreenInk)
                 }
             }
         }
@@ -499,7 +500,8 @@ private fun InfoPoint(icon: ImageVector, bg: Color, fg: Color, title: String, te
             modifier = Modifier
                 .size(31.dp)
                 .clip(RoundedCornerShape(9.dp))
-                .background(bg),
+                .background(Surface2)
+                .border(1.dp, Line, RoundedCornerShape(9.dp)),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp), tint = fg)
@@ -585,8 +587,8 @@ private fun TaskModelsSheet(state: AgentDeckState, taskId: String) {
                 .clickable { state.openCloudSetup() }
                 .padding(horizontal = 4.dp, vertical = 4.dp),
             fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            color = BlueInk
+            fontWeight = FontWeight.Medium,
+            color = Ink
         )
     } else {
         Spacer(Modifier.height(6.dp))
@@ -639,7 +641,7 @@ private fun CompactModelRow(name: String, selected: Boolean, enabled: Boolean, o
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) androidx.compose.ui.graphics.Color(0xFFEFF3FC) else androidx.compose.ui.graphics.Color.Transparent)
+            .background(if (selected) Surface2 else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(enabled = enabled && !selected, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -654,7 +656,7 @@ private fun CompactModelRow(name: String, selected: Boolean, enabled: Boolean, o
             overflow = TextOverflow.Ellipsis
         )
         if (selected) {
-            Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(13.dp), tint = BlueInk)
+            Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(13.dp), tint = Ink)
         }
     }
 }
@@ -700,7 +702,8 @@ private fun CloudProfileList(state: AgentDeckState, onAdd: () -> Unit, onEdit: (
                         modifier = Modifier
                             .size(30.dp)
                             .clip(RoundedCornerShape(9.dp))
-                            .background(VioletSoft),
+                            .background(Surface2)
+                            .border(1.dp, Line, RoundedCornerShape(9.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Outlined.Cloud, contentDescription = null, modifier = Modifier.size(15.dp), tint = com.agentdeck.app.ui.theme.VioletInk)
@@ -1353,7 +1356,7 @@ private fun ApproveSheet(state: AgentDeckState, taskId: String) {
         Checkbox(
             checked = checked,
             onCheckedChange = { checked = it },
-            colors = CheckboxDefaults.colors(checkedColor = Ink, uncheckedColor = androidx.compose.ui.graphics.Color(0xFF9AA0A8))
+            colors = CheckboxDefaults.colors(checkedColor = Ink, uncheckedColor = Muted2)
         )
         Spacer(Modifier.width(6.dp))
         Text("I have reviewed the changes and want to approve them.", fontSize = 11.sp, lineHeight = 15.sp, color = Ink)

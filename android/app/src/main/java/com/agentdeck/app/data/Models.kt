@@ -165,6 +165,16 @@ enum class MessageRole { USER, AGENT, SYSTEM }
 
 enum class DeliveryState { DELIVERED, SENDING, QUEUED, FAILED }
 
+/**
+ * A file the user attached to a message. [path] is relative to the project
+ * workspace, so the agent's `read`/`grep` tools can open it directly.
+ */
+data class Attachment(
+    val name: String,
+    val path: String,
+    val size: Long = 0L
+)
+
 data class Message(
     val id: String,
     val role: MessageRole,
@@ -174,7 +184,8 @@ data class Message(
     val localPreview: Boolean = false,
     val cloud: Boolean = false,
     val modelName: String? = null,
-    val provider: ModelProvider? = null
+    val provider: ModelProvider? = null,
+    val attachments: List<Attachment> = emptyList()
 )
 
 data class ActivityEvent(

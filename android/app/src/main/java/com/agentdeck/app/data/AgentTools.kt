@@ -72,6 +72,29 @@ data class ToolOutcome(val call: ToolCall, val output: String) {
     val ok: Boolean get() = !output.startsWith("ERROR")
 }
 
+/**
+ * Chat models often assume a sandbox and address attachments as
+ * `/home/user/workspace/attachments/x.html`. Map those back to the real
+ * project-relative path so workspace tools can open them.
+ */
+internal fun normalizeWorkspacePath(raw: String): String {
+    val path = raw.trim().replace('\\', '/')
+    if (path.isEmpty()) return path
+    val prefixes = listOf(
+        "/home/user/workspace/",
+        "/workspace/",
+        "./workspace/",
+        "/mnt/data/",
+        "/mnt/user-data/"
+    )
+    prefixes.firstOrNull { path.startsWith(it, ignoreCase = true) }?.let {
+        return path.substring(it.length)
+    }
+    val attachments = path.lastIndexOf("/attachments/")
+    if (attachments >= 0) return path.substring(attachments + 1)
+    return path.removePrefix("./")
+}
+
 object ToolParser {
 
     private val TOOL_NAMES = setOf(
@@ -81,6 +104,70 @@ object ToolParser {
         "share_text", "dial", "sms_compose", "set_alarm", "set_timer",
         "calendar_event", "set_volume"
     )
+
+    /**
+     * Providers invent their own tool names. Chat models that have seen other
+     * agent frameworks emit `read_file`, `execute_command`, and similar.
+     */
+    private val TOOL_ALIASES = mapOf(
+        "read_file" to "read",
+        "readfile" to "read",
+        "file_read" to "read",
+        "open_file" to "read",
+        "view_file" to "read",
+        "cat" to "read",
+        "write_file" to "write",
+        "file_write" to "write",
+        "create_file" to "write",
+        "save_file" to "write",
+        "list_files" to "list",
+        "list_dir" to "list",
+        "list_directory" to "list",
+        "ls" to "list",
+        "run_command" to "run",
+        "execute_command" to "run",
+        "execute" to "run",
+        "shell" to "run",
+        "terminal" to "run",
+        "bash" to "run",
+        "search_web" to "web_search",
+        "websearch" to "web_search",
+        "fetch_url" to "web_fetch",
+        "webfetch" to "web_fetch",
+        "fetch" to "web_fetch"
+    )
+
+    private val ARG_ALIASES = mapOf(
+        "file_path" to "path",
+        "filepath" to "path",
+        "filename" to "path",
+        "file" to "path",
+        "path_name" to "path",
+        "cmd" to "command",
+        "command_line" to "command",
+        "script" to "command",
+        "search_query" to "query",
+        "query_text" to "query",
+        "file_content" to "content",
+        "contents" to "content",
+        "text_content" to "content"
+    )
+
+    private fun canonicalToolName(raw: String): String? {
+        val name = raw.trim().lowercase().replace('-', '_')
+        val canonical = TOOL_ALIASES[name] ?: name
+        return canonical.takeIf { it in TOOL_NAMES }
+    }
+
+    private fun normalizeArgs(raw: Map<String, String>): Map<String, String> {
+        val out = linkedMapOf<String, String>()
+        raw.forEach { (key, value) ->
+            val lower = key.trim().lowercase()
+            val canonical = ARG_ALIASES[lower] ?: lower
+            if (canonical.isNotBlank() && canonical !in out) out[canonical] = value
+        }
+        return out
+    }
 
     /**
      * `agentdeck-tool <name> <args>` at the start of a line. The fence marker
@@ -105,6 +192,17 @@ object ToolParser {
     private val XML_BLOCK = Regex(
         "<(invoke|function_call|dots_function_call|tool_call)\\b.*?</\\1>",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    /** Tag markers that show an XML-shaped tool attempt. */
+    private val XML_WRAPPER = Regex(
+        "<\\s*/?\\s*(invoke|function_call|dots_function_call|tool_call|tool_block)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    /** `key="value"` arguments used by dots calls that skip <parameter>. */
+    private val XML_ATTR = Regex(
+        "([a-zA-Z_][a-zA-Z0-9_-]*)\\s*=\\s*[\"']([^\"']*)[\"']"
     )
     private val XML_NAMES = listOf(
         Regex("<function\\s*=\\s*[\"']?([a-z_]+)", RegexOption.IGNORE_CASE),
@@ -138,6 +236,19 @@ object ToolParser {
             text.contains("\"function_calls\"") ||
             text.contains("\"tool_calls\"")
         if (calls.isEmpty() && jsonCandidate) calls += parseJsonCalls(text)
+        // Some providers wrap a JSON body in a broken XML tag. When the reply
+        // already looks like a tool attempt, a JSON object inside it is still
+        // worth parsing so the run does not stall on a repair round-trip.
+        if (calls.isEmpty() && looksLikeToolAttempt(text) &&
+            text.contains('{') && text.contains('}')
+        ) {
+            calls += parseJsonCalls(text)
+        }
+        // Last resort for hybrids such as a JSON body inside a broken XML tag
+        // without the opening brace: `"action": "read", "parameters": {...}`.
+        if (calls.isEmpty() && looksLikeToolAttempt(text)) {
+            parseLooseJsonCall(text)?.let { calls += it }
+        }
         return calls
     }
 
@@ -151,16 +262,18 @@ object ToolParser {
             text.contains("\"tool_calls\"")
 
     /**
-     * XML counts only when a wrapper and a parameter both appear, so prose
-     * that merely mentions `<parameter>` does not trigger a repair turn.
+     * XML counts only when a wrapper appears with evidence of arguments, so
+     * prose that merely mentions `<parameter>` does not trigger a repair turn.
      */
-    private fun looksLikeXmlAttempt(text: String): Boolean =
-        text.contains("<parameter", ignoreCase = true) &&
-            (
-                text.contains("<invoke", ignoreCase = true) ||
-                    text.contains("function_call", ignoreCase = true) ||
-                    text.contains("<tool_call", ignoreCase = true)
-                )
+    private fun looksLikeXmlAttempt(text: String): Boolean {
+        if (!XML_WRAPPER.containsMatchIn(text)) return false
+        val trimmed = text.trimStart()
+        val startsWithWrapper = XML_WRAPPER.find(trimmed)?.range?.first == 0
+        return startsWithWrapper ||
+            text.contains("<parameter", ignoreCase = true) ||
+            text.contains("<tool_block", ignoreCase = true) ||
+            XML_ATTR.containsMatchIn(text)
+    }
 
     /** Corrective turn used when a tool block could not be parsed. */
     fun repairPrompt(): String = """
@@ -270,29 +383,55 @@ object ToolParser {
      * no known tool, the tool is inferred from the parameter names.
      */
     private fun parseXmlCalls(text: String): List<ToolCall> {
-        if (!text.contains("<parameter", ignoreCase = true)) return emptyList()
         val calls = mutableListOf<ToolCall>()
-        for (block in XML_BLOCK.findAll(text)) {
-            val raw = block.value
-            val params = linkedMapOf<String, String>()
-            for (param in XML_PARAM.findAll(raw)) {
-                params[param.groupValues[1].lowercase()] = decodeXml(param.groupValues[2].trim())
+        if (text.contains("<parameter", ignoreCase = true)) {
+            for (block in XML_BLOCK.findAll(text)) {
+                val raw = block.value
+                val rawParams = linkedMapOf<String, String>()
+                for (param in XML_PARAM.findAll(raw)) {
+                    rawParams[param.groupValues[1].lowercase()] = decodeXml(param.groupValues[2].trim())
+                }
+                val params = normalizeArgs(rawParams)
+                if (params.isEmpty()) continue
+                val explicit = XML_NAMES.firstNotNullOfOrNull { regex ->
+                    regex.find(raw)?.groupValues?.get(1)?.let(::canonicalToolName)
+                }
+                val name = explicit ?: inferXmlTool(params) ?: continue
+                val body = when (name) {
+                    "write" -> params["content"] ?: params["body"] ?: ""
+                    else -> ""
+                }
+                calls += ToolCall(name = name, args = params, body = body)
             }
-            if (params.isEmpty()) continue
-            val explicit = XML_NAMES.firstNotNullOfOrNull { regex ->
-                regex.find(raw)?.groupValues?.get(1)?.lowercase()?.takeIf { it in TOOL_NAMES }
-            }
-            val name = explicit ?: inferXmlTool(params) ?: continue
-            val body = when (name) {
-                "write" -> params["content"]
-                    ?: params["body"]
-                    ?: params["file_content"]
-                    ?: ""
-                else -> ""
-            }
-            calls += ToolCall(name = name, args = params, body = body)
         }
+        if (calls.isEmpty()) calls += parseXmlAttributeCalls(text)
         return calls
+    }
+
+    /**
+     * Dots-preview and similar native formats put the arguments in the opening
+     * tag instead of `<parameter>` children, for example
+     * `<dots_function_call method="GET" url="https://…">`. The wrapper proves
+     * intent, so attributes are read directly and the tool is inferred.
+     */
+    private fun parseXmlAttributeCalls(text: String): List<ToolCall> {
+        if (!XML_WRAPPER.containsMatchIn(text)) return emptyList()
+        val attrs = linkedMapOf<String, String>()
+        for (match in XML_ATTR.findAll(text)) {
+            val key = match.groupValues[1].lowercase()
+            if (key in attrs) continue
+            attrs[key] = decodeXml(match.groupValues[2].trim())
+        }
+        if (attrs.isEmpty()) return emptyList()
+        val explicit = (attrs["name"] ?: attrs["tool"] ?: attrs["function"])
+            ?.let(::canonicalToolName)
+        val rawArgs = attrs.toMutableMap()
+        rawArgs.remove("name")
+        rawArgs.remove("tool")
+        rawArgs.remove("function")
+        val args = normalizeArgs(rawArgs)
+        val name = explicit ?: inferXmlTool(args) ?: return emptyList()
+        return listOf(ToolCall(name = name, args = args, body = ""))
     }
 
     /** Chooses a tool from XML parameter names when the wrapper omits one. */
@@ -318,8 +457,7 @@ object ToolParser {
     /** Returns a normalised `agentdeck-tool name args` string, or null. */
     private fun headerText(line: String): String? {
         val match = HEADER.find(line) ?: return null
-        val name = match.groupValues[1].lowercase()
-        if (name !in TOOL_NAMES) return null
+        val name = canonicalToolName(match.groupValues[1]) ?: return null
         return "agentdeck-tool $name${match.groupValues[2]}"
     }
 
@@ -330,8 +468,7 @@ object ToolParser {
         closed: Boolean = true
     ) {
         val match = HEADER.find(header) ?: return
-        val name = match.groupValues[1].lowercase()
-        if (name !in TOOL_NAMES) return
+        val name = canonicalToolName(match.groupValues[1]) ?: return
         var argsText = match.groupValues[2].trim()
         var body = bodyLines
         if (argsText.isBlank() && body.isNotEmpty()) {
@@ -348,7 +485,7 @@ object ToolParser {
         }
         out += ToolCall(
             name = name,
-            args = parseArgs(argsText),
+            args = normalizeArgs(parseArgs(argsText)),
             body = if (name == "write") body.joinToString("\n").trimEnd('\n') else "",
             truncated = !closed
         )
@@ -448,21 +585,23 @@ object ToolParser {
         return listOfNotNull(jsonCall(obj))
     }
 
-    private fun jsonCall(obj: JSONObject?): ToolCall? {
-        if (obj == null) return null
+    private fun jsonCall(obj: JSONObject?): ToolCall? {        if (obj == null) return null
         val function = obj.optJSONObject("function")
-        val name = obj.optString("name").ifBlank { function?.optString("name").orEmpty() }.lowercase()
-        if (name !in TOOL_NAMES) return null
+        val name = canonicalToolName(
+            obj.optString("name")
+                .ifBlank { function?.optString("name").orEmpty() }
+                .ifBlank { obj.optString("action") }
+        ) ?: return null
         val argsObj = obj.optJSONObject("arguments")
             ?: function?.optJSONObject("arguments")
             ?: obj.optJSONObject("parameters")
-        val args = linkedMapOf<String, String>()
+        val rawArgs = linkedMapOf<String, String>()
         if (argsObj != null) {
             val keys = argsObj.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
                 val value = argsObj.opt(key)
-                args[key] = when (value) {
+                rawArgs[key] = when (value) {
                     null, JSONObject.NULL -> ""
                     is String -> value
                     else -> value.toString()
@@ -470,12 +609,31 @@ object ToolParser {
             }
         } else {
             val raw = obj.optString("arguments").ifBlank { function?.optString("arguments").orEmpty() }
-            if (raw.isNotBlank()) args.putAll(parseArgs(raw))
+            if (raw.isNotBlank()) rawArgs.putAll(parseArgs(raw))
         }
+        val args = normalizeArgs(rawArgs)
         val body = obj.optString("body").ifBlank {
             obj.optString("content").ifBlank { args["content"].orEmpty() }
         }
         return ToolCall(name = name, args = args, body = body)
+    }
+
+    /** Salvages `"action": "read", "parameters": {…}` inside a broken wrapper. */
+    private fun parseLooseJsonCall(text: String): ToolCall? {
+        val nameMatch = Regex(
+            "\"(?:action|name|tool)\"\\s*:\\s*\"([a-z_]+)\"",
+            RegexOption.IGNORE_CASE
+        ).find(text) ?: return null
+        val name = canonicalToolName(nameMatch.groupValues[1]) ?: return null
+        val block = Regex(
+            "\"(?:parameters|arguments)\"\\s*:\\s*\\{(.*?)\\}",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        ).find(text)?.groupValues?.get(1).orEmpty()
+        val args = linkedMapOf<String, String>()
+        Regex("\"([a-zA-Z_][a-zA-Z0-9_]*)\"\\s*:\\s*\"([^\"]*)\"").findAll(block).forEach { match ->
+            args[match.groupValues[1]] = decodeXml(match.groupValues[2])
+        }
+        return ToolCall(name = name, args = normalizeArgs(args), body = "")
     }
 
     /** Formats outcomes as the next user turn for the model. */
@@ -601,10 +759,16 @@ Phone tool signatures (exact argument names, double-quoted values):
 - calendar_event title="Dentist" start="2026-10-30 14:30" duration_minutes="45"
 - set_volume level="40" stream="music"
 
+Workspace tools for files the user attaches:
+- list path="attachments"
+- read path="attachments/1739-file.html"
+- grep pattern="TODO" path="attachments"
+
 Rules:
 - Put the tool name and every argument on the opening line; use double quotes around values.
 - Close every block with a line containing only three backticks.
 - One call per block. Never wrap a tool block inside another code fence.
+- Attached files are listed with paths such as `attachments/1739-file.html`. Open a text file with `read path="…"` before answering questions about it. Images included in the message are visible to you: describe what you see directly instead of saying you cannot read binary. PDFs and other binary files cannot be read as text; say so instead of guessing.
 - web_search, web_fetch, and memory tools run automatically; http calls need the user's approval (they see the exact URL and body).
 - Phone tools control the device. device_status and list_apps only read state. open_app, open_settings, open_url, set_alarm, set_timer, calendar_event and set_volume are safe actions. dial, sms_compose and share_text open the system UI prefilled and require approval; they never place a call or send a message themselves.
 - Use the exact phone signatures above; a missing or wrong argument is rejected before anything runs.
@@ -647,8 +811,7 @@ Be accurate, cite the URLs you used, and never claim you did something you did n
     private const val RESULT_CAP = 12_000
 }
 
-/** Runs parsed tool calls against the real workspace, shell, and git. */class ToolExecutor(
-    private val workspace: Workspace,
+/** Runs parsed tool calls against the real workspace, shell, and git. */class ToolExecutor(    private val workspace: Workspace,
     private val shell: ShellRunner,
     private val git: WorkspaceGit,
     private val web: WebTools,
@@ -669,7 +832,7 @@ Be accurate, cite the URLs you used, and never claim you did something you did n
         call: ToolCall,
         approved: suspend (ToolCall) -> Boolean
     ): ToolOutcome {
-        val path = call.args["path"].orEmpty()
+        val path = normalizeWorkspacePath(call.args["path"].orEmpty())
         val command = call.args["command"].orEmpty()
         val url = call.args["url"].orEmpty()
 

@@ -1,6 +1,7 @@
 package com.agentdeck.app.data.local
 
 import com.agentdeck.app.data.ActivityEvent
+import com.agentdeck.app.data.Attachment
 import com.agentdeck.app.data.ChangedFile
 import com.agentdeck.app.data.CheckRun
 import com.agentdeck.app.data.CheckStatus
@@ -111,6 +112,21 @@ internal object TaskCodec {
         put("cloud", message.cloud)
         put("modelName", message.modelName ?: JSONObject.NULL)
         put("provider", message.provider?.name ?: JSONObject.NULL)
+        put("attachments", JSONArray().also { array ->
+            message.attachments.forEach { array.put(attachmentToJson(it)) }
+        })
+    }
+
+    private fun attachmentToJson(attachment: Attachment) = JSONObject().apply {
+        put("name", attachment.name)
+        put("path", attachment.path)
+        put("size", attachment.size)
+    }
+
+    private fun attachmentFromJson(json: JSONObject): Attachment? {
+        val name = json.optString("name").takeIf { it.isNotEmpty() } ?: return null
+        val path = json.optString("path").takeIf { it.isNotEmpty() } ?: return null
+        return Attachment(name = name, path = path, size = json.optLong("size", 0L))
     }
 
     private fun messageFromJson(json: JSONObject): Message? {
@@ -125,7 +141,8 @@ internal object TaskCodec {
             localPreview = json.optBoolean("localPreview", false),
             cloud = json.optBoolean("cloud", false),
             modelName = json.optStringOrNull("modelName"),
-            provider = enumOrNull<ModelProvider>(json.optString("provider"))
+            provider = enumOrNull<ModelProvider>(json.optString("provider")),
+            attachments = json.objects("attachments").mapNotNull(::attachmentFromJson)
         )
     }
 

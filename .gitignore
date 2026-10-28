@@ -46,3 +46,6 @@ agentdeck-mock.log
 
 # Release artifacts built locally
 dist/
+
+# Local verification screenshots and scratch downloads
+preview-local/

@@ -3,6 +3,7 @@ package com.agentdeck.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentdeck.app.data.AgentDeckState
 import com.agentdeck.app.data.StatusFilter
+import com.agentdeck.app.data.Task
 import com.agentdeck.app.data.TaskStatus
 import com.agentdeck.app.data.TaskKind
 import com.agentdeck.app.data.matchesFilter
@@ -51,6 +53,19 @@ fun TasksScreen(state: AgentDeckState, kind: TaskKind = TaskKind.CODING) {
     val project = state.activeProject
     val all = state.tasksOfKind(kind)
     val filtered = state.filteredTasksOfKind(kind, state.taskQuery, state.statusFilter)
+    val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val taskCard: @Composable (Task) -> Unit = { task ->
+        AdTaskCard(
+            task = task,
+            projectName = state.project(task.projectId)?.name ?: project.name,
+            modelName = state.taskModelName(task),
+            isLocal = state.isLocalTask(task),
+            isCloud = state.isCloudTask(task),
+            onClick = { state.openTask(task.id) },
+            onDelete = { state.deleteTask(task.id) }
+        )
+    }
 
     Column(Modifier.fillMaxSize().background(Surface2)) {
         Column(
@@ -120,8 +135,8 @@ fun TasksScreen(state: AgentDeckState, kind: TaskKind = TaskKind.CODING) {
                     Text(
                         "Switch project",
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = BlueInk,
+                        fontWeight = FontWeight.Medium,
+                        color = Ink,
                         modifier = Modifier
                             .clip(RoundedCornerShape(7.dp))
                             .clickable { state.openProjectSheet() }
@@ -145,17 +160,21 @@ fun TasksScreen(state: AgentDeckState, kind: TaskKind = TaskKind.CODING) {
                         }
                     )
                 }
+            } else if (landscape) {
+                items(filtered.chunked(2)) { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        row.forEach { task ->
+                            Box(Modifier.weight(1f)) { taskCard(task) }
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
             } else {
                 items(filtered, key = { it.id }) { task ->
-                    AdTaskCard(
-                        task = task,
-                        projectName = state.project(task.projectId)?.name ?: project.name,
-                        modelName = state.taskModelName(task),
-                        isLocal = state.isLocalTask(task),
-                        isCloud = state.isCloudTask(task),
-                        onClick = { state.openTask(task.id) },
-                        onDelete = { state.deleteTask(task.id) }
-                    )
+                    taskCard(task)
                 }
             }
         }

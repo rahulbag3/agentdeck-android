@@ -1,7 +1,11 @@
 package com.agentdeck.app.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,18 +16,37 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -285,8 +308,10 @@ internal fun safeLink(url: String): Boolean =
     url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
 
 @Composable
-internal fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+internal fun MarkdownText(text: String, modifier: Modifier = Modifier, fileBase: String = "reply") {
     val blocks = remember(text) { parseMarkdown(text) }
+    val codeCount = remember(blocks) { blocks.count { it is MarkdownBlock.CodeFence } }
+    var codeIndex = 0
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { block ->
             when (block) {
@@ -311,7 +336,11 @@ internal fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                 }
                 is MarkdownBlock.BulletList -> MarkdownList(block.items, start = null)
                 is MarkdownBlock.NumberedList -> MarkdownList(block.items, start = block.start)
-                is MarkdownBlock.CodeFence -> MarkdownCode(block)
+                is MarkdownBlock.CodeFence -> {
+                    codeIndex += 1
+                    val base = if (codeCount > 1) "$fileBase-$codeIndex" else fileBase
+                    MarkdownCode(block, base)
+                }
                 is MarkdownBlock.Quote -> MarkdownQuote(block.text)
                 MarkdownBlock.Rule -> AdDivider(Modifier.padding(vertical = 2.dp))
             }
@@ -364,7 +393,15 @@ private fun MarkdownQuote(text: String) {
 }
 
 @Composable
-private fun MarkdownCode(block: MarkdownBlock.CodeFence) {
+private fun MarkdownCode(block: MarkdownBlock.CodeFence, fileBase: String) {
+    val exporter = LocalReplyExporter.current
+    val clipboard = LocalClipboardManager.current
+    val scroll = rememberScrollState()
+    val lineCount = remember(block.code) {
+        block.code.trimEnd('\n').count { it == '\n' } + 1
+    }
+    val collapsible = lineCount > 12
+    var expanded by remember(block.code) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -376,31 +413,161 @@ private fun MarkdownCode(block: MarkdownBlock.CodeFence) {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Surface3)
-                .padding(horizontal = 9.dp, vertical = 5.dp)
+                .padding(start = 9.dp, end = 5.dp, top = 3.dp, bottom = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = block.language.ifBlank { "code" },
+                modifier = Modifier.weight(1f),
                 fontFamily = Mono,
                 fontSize = 8.5.sp,
                 fontWeight = FontWeight.Bold,
                 color = Muted
             )
-        }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(10.dp)
-        ) {
-            Text(
-                text = block.code,
-                fontFamily = Mono,
-                fontSize = 10.5.sp,
-                lineHeight = 16.sp,
-                color = Ink,
-                softWrap = false
+            if (collapsible) {
+                CodeAction(
+                    icon = if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                    description = if (expanded) "Collapse code" else "Expand code",
+                    onClick = { expanded = !expanded }
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            CodeAction(
+                icon = Icons.Outlined.ContentCopy,
+                description = "Copy code",
+                onClick = {
+                    clipboard.setText(AnnotatedString(block.code))
+                    exporter?.notify("Copied code")
+                }
             )
+            Spacer(Modifier.width(6.dp))
+            if (exporter != null) {
+                CodeAction(
+                    icon = Icons.Outlined.FileDownload,
+                    description = "Save code",
+                    onClick = { exporter.save(codeReplyFile(block.language, block.code, fileBase)) }
+                )
+            }
         }
+        if (collapsible && !expanded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 178.dp)
+                    .clipToBounds()
+                    .tapWithinSlop { expanded = true }
+            ) {
+                CodeText(block.code, scroll = null)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Surface2)
+                            )
+                        )
+                )
+            }
+        } else if (collapsible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .tapWithinSlop { expanded = false }
+            ) {
+                CodeText(block.code, scroll)
+            }
+        } else {
+            CodeText(block.code, scroll)
+        }
+        if (collapsible) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Surface3)
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (expanded) "Collapse code" else "Show all $lineCount lines",
+                    modifier = Modifier.weight(1f),
+                    fontFamily = Mono,
+                    fontSize = 8.5.sp,
+                    color = Muted
+                )
+                Icon(
+                    if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = Muted
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CodeText(code: String, scroll: ScrollState?) {
+    val body = Modifier
+        .fillMaxWidth()
+        .padding(10.dp)
+    if (scroll != null) {
+        Box(body.horizontalScroll(scroll)) {
+            CodeLine(code)
+        }
+    } else {
+        Box(body) {
+            CodeLine(code)
+        }
+    }
+}
+
+@Composable
+private fun CodeLine(code: String) {
+    Text(
+        text = code,
+        fontFamily = Mono,
+        fontSize = 10.5.sp,
+        lineHeight = 16.sp,
+        color = Ink,
+        softWrap = false
+    )
+}
+
+private fun Modifier.tapWithinSlop(onTap: () -> Unit): Modifier = pointerInput(onTap) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var moved = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) moved = true
+            if (change.changedToUp()) {
+                if (!moved) onTap()
+                break
+            }
+            if (!change.pressed) break
+        }
+    }
+}
+
+@Composable
+private fun CodeAction(icon: ImageVector, description: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(20.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon,
+            contentDescription = description,
+            modifier = Modifier.size(11.dp),
+            tint = Muted
+        )
     }
 }
 

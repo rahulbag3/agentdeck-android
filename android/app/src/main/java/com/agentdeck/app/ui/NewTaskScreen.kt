@@ -316,7 +316,7 @@ private fun ModelSelectButton(model: ModelOption?, onClick: () -> Unit) {
         color = AdSurface,
         border = BorderStroke(
             1.dp,
-            if ((local || cloud) && !ready) androidx.compose.ui.graphics.Color(0xFFEAD7AC) else Line
+            if ((local || cloud) && !ready) AmberInk.copy(alpha = 0.4f) else Line
         )
     ) {
         Row(
@@ -514,8 +514,8 @@ private fun CloudContextPicker(state: AgentDeckState, draft: com.agentdeck.app.d
                 Text(
                     "Manage",
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BlueInk,
+                    fontWeight = FontWeight.Medium,
+                    color = Ink,
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .clickable { state.openGitHubSetup() }
@@ -631,7 +631,7 @@ private fun ErrorCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = RedSoft,
-        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFF6C9C4))
+        border = BorderStroke(1.dp, RedInk.copy(alpha = 0.35f))
     ) {
         Column(Modifier.padding(11.dp)) {
             Row(verticalAlignment = Alignment.Top) {
