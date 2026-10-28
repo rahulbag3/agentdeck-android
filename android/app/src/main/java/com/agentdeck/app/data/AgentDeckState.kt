@@ -330,6 +330,7 @@ class AgentDeckState(
                 )
                 restored = validateSettings(restored)
                 restored = attributeAgentMessages(restored)
+                restored = rebindOrphanedTasks(restored)
                 data = restored
                 reconcileDefaultModel()
             }
@@ -351,6 +352,23 @@ class AgentDeckState(
             }
             startPersistenceLoop()
         }
+    }
+
+    /** Reattaches tasks left with a modelId that no longer exists. */
+    private fun rebindOrphanedTasks(source: AgentDeckData): AgentDeckData {
+        if (importedModels.isEmpty()) return source
+        val modelIds = source.models.map { it.id }.toSet()
+        var changed = false
+        val tasks = source.tasks.map { task ->
+            val rebound = rebindOrphanedTask(task, modelIds, importedModels)
+            if (rebound != null) {
+                changed = true
+                rebound
+            } else {
+                task
+            }
+        }
+        return if (changed) source.copy(tasks = tasks) else source
     }
 
     private fun validateSettings(source: AgentDeckData): AgentDeckData {
@@ -1108,6 +1126,7 @@ class AgentDeckState(
                 importedModels = importedModels + imported
                 config.localModelsJson = LocalModelRegistry.encode(importedModels)
                 data = data.copy(models = data.models + imported.toModelOption())
+                data = rebindOrphanedTasks(data)
                 val visionNote = when {
                     visionCapable -> " · vision projector needed"
                     info != null -> " · text-only GGUF"
